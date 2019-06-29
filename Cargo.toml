@@ -1,0 +1,22 @@
+[package]
+name = "infer"
+version = "0.2.0"
+authors = ["Yuan Liu <yuan6liu@gmail.com>"]
+edition = "2018"
+description = "Tools for gradient based methods."
+repository = "https://github.com/clearlycloudy/infer/"
+keywords = [ "autograd" ]
+license = "BSD-2-Clause"
+documentation = "https://docs.rs/infer/0.2.0/infer/"
+readme = "README.md"
+
+[dependencies]
+rand = "0.5.5"
+chrono = "0.4.0"
+num = "0.1.41"
+mazth = "0.0.0"
+crossbeam = "0.4.1"
+
+[lib]
+name = "infer"
+path = "src/mod.rs"
