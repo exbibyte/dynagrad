@@ -494,34 +494,37 @@ fn test_fun_1( a: PtrWrap, b: PtrWrap ) -> PtrWrap {
 }
     
 #[test]
-fn test() {
+fn test_helper_function() {
 
-    // let a = Const(3.);
-    // let b = X();
-    // let mut c = Mul(a,b);
+    let mut c = X(3.);
 
-    // for i in 0..3 {
-    //     c = test_fun_1( Const(3.), c );
-    // }
+    for i in 0..3 {
+        c = test_fun_1( Const(3.), c );
+    }
 
-    // let ans = c.borrow().eval();
-    // dbg!(&ans);
+    let ans = c.borrow().eval();
+    dbg!(&ans);
 
-    // let ans2 = c.borrow().dual().borrow().eval();
-    // dbg!(ans2);
+    let ans2 = c.borrow().dual().borrow().eval();
+    dbg!(ans2);
+}
 
-    // let a = X(2.);
-    // let c = Cos(a);
-    // let ans = c.borrow().dual().borrow().eval();
-    // dbg!(&ans);
+#[test]
+fn test_sin() {
+    let a = X(2.);
+    let c = Sin(a);
+    let ans = c.borrow().dual().borrow().eval();
+    dbg!(&ans);
+    let ans2 = c.borrow().dual().borrow().dual().borrow().eval();
+    dbg!(&ans2);
+}
 
+#[test]
+fn test_powi() {
     let a = X(4.);
-    let b = Consti(0);
-    let c = Powi(a,b);
-    dbg!( &c.borrow().dual().borrow() );
-    // let dc = c.borrow().dual().borrow().eval();
-    // let ddc = c.borrow().dual().borrow().dual().borrow().eval();
-    // dbg!(&dc);
-    // dbg!(&ddc);
-    
+    let c = Powi(a,Consti(1));
+    let dc = c.borrow().dual().borrow().eval();
+    let ddc = c.borrow().dual().borrow().dual().borrow().eval();
+    dbg!(&dc);
+    dbg!(&ddc);
 }
