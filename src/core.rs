@@ -1,245 +1,165 @@
 #![allow(non_snake_case)]
 /// An implementation of dynamic automatic differentiation
 
-use std::rc::{Rc,/*Weak*/};
+use std::rc::{Rc};
+use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
 use std::cell::RefCell;
 
-type PtrWrap = Rc<RefCell<Wrap>>;
-//type WeakWrap = Weak<RefCell<Wrap>>;
+#[derive(Clone,Debug)]
+pub struct PtrVWrap(pub Rc<RefCell<VWrap>>);
 
+use crate::valtype::ValType;
+
+lazy_static! {
+    static ref ID: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
+}
+
+fn get_id() -> i32 {
+    ID.fetch_add(1,Ordering::SeqCst) as _
+}
+
+/// wrapper for variable with recording of dependencies
 #[derive(Debug)]
-pub struct Wrap {
-    pub inp: Vec<PtrWrap>,
-    raw: Box<dyn Var>,
+pub struct VWrap {
+
+    /// input dependencies
+    pub inp: Vec<PtrVWrap>,
+
+    /// source function
+    raw: Box<dyn FWrap>,
+
+    /// evaluted value
+    pub val: Option<ValType>,
+
+    /// for debugging
+    pub id: i32,
+
+    pub eval_g: bool,
 }
 
-#[derive(Debug,Clone,Copy)]
-pub enum ValType {
-    F(f32),
-    D(f64),
-    I(i32),
-    L(i64),
-}
-
-use std::fmt;
-
-impl fmt::Display for ValType {
-    fn fmt(&self, f: &mut fmt::Formatter ) -> fmt::Result {
-        write!( f, "{:?}", self )
-    }
-}
-
+/// initializer functions
 #[allow(dead_code)]
-impl Wrap {
-    fn new( v: Box<dyn Var> ) -> PtrWrap {
-        Rc::new( RefCell::new( Wrap {
+impl VWrap {
+
+    fn new( v: Box<dyn FWrap> ) -> PtrVWrap {
+        PtrVWrap( Rc::new( RefCell::new( VWrap {
             inp: vec![],
-            raw: v
-        } ) )
+            raw: v,
+            val: None,
+            id: get_id(),
+            eval_g: false,
+        } ) ) )
     }
-    fn set_inp( & mut self, v: Vec<PtrWrap> ) {
-        self.inp = v;
+
+    fn new_with_input( f: Box<dyn FWrap>, v: Vec<PtrVWrap> ) -> PtrVWrap {
+        PtrVWrap( Rc::new( RefCell::new( VWrap {
+            inp: v,
+            raw: f,
+            val: None,
+            id: get_id(),
+            eval_g: false,
+        } ) ) )
     }
-    fn eval(&self) -> ValType {
-        let mut args = vec![];
+
+    fn new_with_val( v: Box<dyn FWrap>, val: ValType ) -> PtrVWrap {
+        PtrVWrap( Rc::new( RefCell::new( VWrap {
+            inp: vec![],
+            raw: v,
+            val: Some(val),
+            id: get_id(),
+            eval_g: false,
+        } ) ) )
+    }
+}
+
+impl PtrVWrap {
+
+    fn set_inp( & mut self, v: Vec<PtrVWrap> ) {
+        self.0.borrow_mut().inp = v;
+    }
+
+    fn set_val( & mut self, v: ValType ) {
+        self.0.borrow_mut().val = Some(v);
+    }
+    
+    fn apply_fwd(& mut self) -> ValType {
         
-        for i in self.inp.iter() {
-            let w = i.borrow_mut();
-            let val = w.eval();
-            args.push(val);
+        let mut args : Vec<(ValType,bool)> = vec![];
+
+        //recursive apply
+        for i in self.0.borrow_mut().inp.iter_mut() {
+            let val = i.apply_fwd();
+            args.push((val, i.0.borrow().eval_g));
         }
         
-        self.raw.f()(args)
+        let v = self.0.borrow().raw.f()( args, self.0.borrow().val );
+        
+        self.0.borrow_mut().val = Some(v);
+
+        v
     }
-    fn dual(&self) -> PtrWrap {
-        self.raw.dual( self.inp.clone() )
+    
+    //create a gradient function wrt. to the current variable
+    pub fn grad(&self) -> PtrVWrap {
+        let mut g = self.0.borrow().raw.g();
+        let ret = g( self.0.borrow().inp.clone(), self );
+        ret
     }
+
+    fn active(&mut self) -> Self {
+        self.0.borrow_mut().eval_g = true;
+        self.clone()
+    }
+    
+    // pub fn deep_clone(&self) -> PtrVWrap {
+    //     PtrVWrap( Rc::new( RefCell::new( VWrap {
+    //         inp: vec![],
+    //         raw: OpConst::new(),
+    //         val: self.0.borrow().val,
+    //         id: get_id(),
+    //     } ) ) )
+    // }
 }
 
-trait Var : std::fmt::Debug {
-    fn new() -> Box<dyn Var > where Self: Sized;
-    fn f(&self) -> Box<dyn FnMut(Vec<ValType>) -> ValType >;
-    fn primal(&self) -> Box<dyn Var>;
-    fn dual(&self, args: Vec<PtrWrap> ) -> PtrWrap;
+/// wrapper for function
+trait FWrap : std::fmt::Debug {
+    
+    fn new() -> Box<dyn FWrap > where Self: Sized;
+
+    ///creates a function to evaluate given values
+    fn f(&self) -> Box<dyn FnMut(Vec<(ValType,bool)>, Option<ValType>) -> ValType >;
+
+    ///creates gradient function with given input dependencies and returns wrapped variable
+    fn g(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, &PtrVWrap) -> PtrVWrap >;
+
+    // fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, &PtrVWrap) -> PtrVWrap >;
 }
 
-#[derive(Debug,Clone,Copy)]
-struct OpX {} //marker for indicating a variable for differentiation
-#[derive(Debug,Clone,Copy)]
-struct OpConst { v: f32 }
-#[derive(Debug,Clone,Copy)]
-struct OpConsti { v: i32 }
-#[derive(Debug,Clone,Copy)]
-struct OpSin {}
-#[derive(Debug,Clone,Copy)]
-struct OpCos {}
 #[derive(Debug,Clone,Copy)]
 struct OpMul {}
 #[derive(Debug,Clone,Copy)]
 struct OpAdd {}
 #[derive(Debug,Clone,Copy)]
-struct OpSub {}
+struct OpLeaf {}
 #[derive(Debug,Clone,Copy)]
-struct OpPowi {}
+struct OpOne {}
+/// special link to variable of interest for gradient calc
+#[derive(Debug,Clone,Copy)]
+struct OpLink {}
+#[derive(Debug,Clone,Copy)]
+struct OpZero {}
+#[derive(Debug,Clone,Copy)]
+struct OpConst {}
 
-impl Var for OpX {
-    fn new() -> Box<dyn Var> where Self: Sized {
-        Box::new( OpX{} )
-    }
-    fn f(&self) -> Box<dyn FnMut(Vec<ValType>) -> ValType > {
-        Box::new( move |_x:Vec<ValType>| ValType::F(1.) )
-    }
-    fn primal(&self) -> Box<dyn Var> {
-        Box::new( OpX{} )
-    }
-    fn dual(&self, _inp: Vec<PtrWrap> ) -> PtrWrap {
-        Const(1.)
-   }
-}
-
-impl Var for OpConst {
-    fn new() -> Box<dyn Var> where Self: Sized {
-        Box::new( OpConst{ v: 0. } )
-    }
-    fn f(&self) -> Box<dyn FnMut(Vec<ValType>) -> ValType > {
-        let val = self.v;
-        Box::new( move |_x:Vec<ValType>| ValType::F(val) )
-    }
-    fn primal(&self) -> Box<dyn Var> {
-        Box::new( OpConst{ v: self.v } )
-    }
-    fn dual(&self, _inp: Vec<PtrWrap> ) -> PtrWrap {
-        Const(0.)
-   }
-}
-
-impl OpConst {
-    fn new_with( v: f32 ) -> Box<dyn Var>{
-        Box::new( OpConst{ v: v } )
-    }
-}
-
-impl Var for OpConsti {
-    fn new() -> Box<dyn Var> where Self: Sized {
-        Box::new( OpConsti{ v: 0 } )
-    }
-    fn f(&self) -> Box<dyn FnMut(Vec<ValType>) -> ValType > {
-        let val = self.v;
-        Box::new( move |_x:Vec<ValType>| ValType::I(val) )
-    }
-    fn primal(&self) -> Box<dyn Var> {
-        Box::new( OpConsti{ v: self.v } )
-    }
-    fn dual(&self, _inp: Vec<PtrWrap> ) -> PtrWrap {
-        Consti(0)
-   }
-}
-
-impl OpConsti {
-    fn new_with( v: i32 ) -> Box<dyn Var>{
-        Box::new( OpConsti{ v: v } )
-    }
-}
-
-impl Var for OpSin {
-    fn new() -> Box<dyn Var> where Self: Sized {
-        Box::new( OpSin{} )
-    }
-    fn f(&self) -> Box<dyn FnMut(Vec<ValType>) -> ValType > {
-        Box::new( |x:Vec<ValType>|
-                   match x[0] {
-                       ValType::F(v) => ValType::F(v.sin()),
-                       _ => {panic!("type not supported");},
-                   }
-        )
-    }
-    fn primal(&self) -> Box<dyn Var>{
-        Self::new()
-    }
-    fn dual(&self, inp: Vec<PtrWrap> ) -> PtrWrap {
-
-        let mut inp_dual = vec![];
-
-        //assume 1 input for now
-        
-        for i in inp.iter().take(1) {
-            let w = i.borrow_mut();
-            let d = w.dual();
-            inp_dual.push(d);
-        }
-
-        //(sin(x))'=cos(x)x'
-        
-        let a = Rc::new( RefCell::new( Wrap{
-            inp: inp,
-            raw: OpCos::new(),
-        } ) );
-
-        let b = Rc::new( RefCell::new( Wrap{
-            inp: vec![ a, inp_dual[0].clone() ],
-            raw: OpMul::new(),
-        } ) );
-
-        b
-    }
-}
-
-impl Var for OpCos {
-    fn new() -> Box<dyn Var> where Self: Sized {
-        Box::new( OpCos{} )
-    }
-    fn f(&self) -> Box<dyn FnMut(Vec<ValType>) -> ValType > {
-        Box::new( |x:Vec<ValType>|
-                   match x[0] {
-                       ValType::F(v) => ValType::F(v.cos()),
-                       _ => {panic!("type not supported");},
-                   }
-        )
-    }
-    fn primal(&self) -> Box<dyn Var>{
-        Self::new()
-    }
-    fn dual(&self, inp: Vec<PtrWrap> ) -> PtrWrap {
-
-        //assume 1 input for now
-        
-        let mut inp_dual = vec![];
-        
-        for i in inp.iter().take(1) {
-            let w = i.borrow_mut();
-            let d = w.dual();
-            inp_dual.push(d);
-        }
-
-        //(cos(x))'=-sin(x)x'
-        
-        let a = Rc::new( RefCell::new( Wrap{
-            inp: inp,
-            raw: OpSin::new(),
-        } ) );
-        
-        let b = Rc::new( RefCell::new( Wrap{
-            inp: vec![ a, inp_dual[0].clone() ],
-            raw: OpMul::new(),
-        } ) );
-
-        let c = Rc::new( RefCell::new( Wrap{
-            inp: vec![ Const(-1.), b ],
-            raw: OpMul::new(),
-        } ) );
-
-        c
-    }
-}
-
-impl Var for OpMul {
-    fn new() -> Box<dyn Var> where Self: Sized {
+impl FWrap for OpMul {
+    fn new() -> Box<dyn FWrap> where Self: Sized {
         Box::new( OpMul{} )
     }
-    fn f(&self) -> Box<dyn FnMut(Vec<ValType>) -> ValType > {
-        Box::new( |x:Vec<ValType>| {
-            assert!( x.len() > 1 );
-            match (x[0],x[1]) {
+    fn f(&self) -> Box<dyn FnMut(Vec<(ValType,bool)>, Option<ValType>) -> ValType > {
+        
+        Box::new( move |x:Vec<(ValType,bool)>,_:Option<ValType>| {
+            assert!( x.len() == 2 );
+            match (x[0].0,x[1].0) {
                 (ValType::F(v0), ValType::F(v1)) => ValType::F(v0*v1),
                 (ValType::I(v0), ValType::I(v1)) => ValType::I(v0*v1),
                 (ValType::F(v0), ValType::I(v1)) => ValType::F(v0 * v1 as f32),
@@ -248,283 +168,219 @@ impl Var for OpMul {
             }
         } )
     }
-    fn primal(&self) -> Box<dyn Var>{
-        Self::new()
-    }
-    fn dual(&self, args: Vec<PtrWrap> ) -> PtrWrap {
+    fn g(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
+        Box::new( move |args:Vec<PtrVWrap>,_:&PtrVWrap| {
+            
+            assert!(args.len()==2);
+            
+            //apply chain rule: (xy)' = x'y + xy'
 
-        //only consider 2 input arguments
+            let a_prime = args[0].grad();
+            let m1 = VWrap::new_with_input( OpMul::new(),
+                                            vec![ a_prime,
+                                                  args[1].clone() ] );
 
-        assert!( args.len() >= 2 );
+            let b_prime = args[1].grad();
+            let m2 = VWrap::new_with_input( OpMul::new(),
+                                            vec![ args[0].clone(),
+                                                  b_prime ] );
 
-        //apply chain rule: (xy)' = x'y + xy'
-
-        let a_prime = args[0].borrow_mut().dual();
-        let m1 = Rc::new( RefCell::new(
-            Wrap {
-                inp: vec![ a_prime,
-                           args[1].clone() ],
-                raw: OpMul::new(),
-            }
-        ) );
-
-        let b_prime = args[1].borrow_mut().dual();
-        let m2 = Rc::new( RefCell::new(
-            Wrap {
-                inp: vec![ args[0].clone(),
-                           b_prime ],
-                raw: OpMul::new(),
-            }
-        ) );
-        
-        Rc::new( RefCell::new(
-            Wrap {
-                inp: vec![ m1, m2 ],
-                raw: OpAdd::new(),
-            }
-        ) )
+            VWrap::new_with_input( OpAdd::new(),
+                                   vec![ m1, m2 ] )
+        })
     }
 }
 
-impl Var for OpAdd {
-    fn new() -> Box<dyn Var> where Self: Sized {
+impl FWrap for OpAdd {
+    fn new() -> Box<dyn FWrap> where Self: Sized {
         Box::new( OpAdd{} )
     }
-    fn f(&self) -> Box<dyn FnMut(Vec<ValType>) -> ValType > {
-        Box::new( |x:Vec<ValType>| {
-            assert!( x.len() > 1 );
-            match (x[0],x[1]){
+    fn f(&self) -> Box<dyn FnMut(Vec<(ValType,bool)>, Option<ValType>) -> ValType > {
+        Box::new( move |x:Vec<(ValType,bool)>,_:Option<ValType>| {
+            assert!( x.len() == 2 );
+            match (x[0].0,x[1].0){
                 (ValType::F(v0),ValType::F(v1)) => { ValType::F(v0+v1) },
                 (ValType::I(v0),ValType::I(v1)) => { ValType::I(v0+v1) },
                 _ => {panic!("type not supported");},
             }
         } )
     }
-    fn primal(&self) -> Box<dyn Var>{
-        Self::new()
-    }
-    fn dual(&self, args: Vec<PtrWrap> ) -> PtrWrap {
+    fn g(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
 
-        //apply rule: (a+b+c+...)' = a'+b'+c'+...
-        
-        let mut inp_dual = vec![];
-        
-        for i in args.iter() {
-            let w = i.borrow_mut();
-            let d = w.dual();
-            inp_dual.push(d);
-        }
+        Box::new( move |args: Vec<PtrVWrap>,_:&PtrVWrap| {
 
-        assert!( inp_dual.len() > 0 );
-
-        let count = inp_dual.len();
-        
-        if count > 1 {
-            for i in 1..count {   
-                let temp = Rc::new( RefCell::new( Wrap{
-                    inp: vec![ inp_dual[i-1].clone(), inp_dual[i].clone() ],
-                    raw: OpAdd::new(),
-                } ) );
-
-                inp_dual[i] = temp;
+            //apply rule: (a+b+c+...)' = a'+b'+c'+...
+            
+            let mut inp_grad = vec![];
+            
+            for i in args.iter() {
+                let d = i.grad();
+                inp_grad.push(d);
             }
-        }
-        inp_dual[count-1].clone()
+
+            assert!( inp_grad.len() > 0 );
+
+            let count = inp_grad.len();
+            
+            if count > 1 {
+                for i in 1..count {
+                    
+                    let temp = VWrap::new_with_input(
+                        OpAdd::new(),
+                        vec![ inp_grad[i-1].clone(), inp_grad[i].clone() ],
+                    );
+
+                    inp_grad[i] = temp;
+                }
+            }
+            inp_grad[count-1].clone()
+        })
     }
 }
 
-impl Var for OpSub {
-    fn new() -> Box<dyn Var> where Self: Sized {
-        Box::new( OpSub{} )
+impl FWrap for OpLeaf {
+    fn new() -> Box<dyn FWrap> where Self: Sized {
+        Box::new( OpLeaf{} )
     }
-    fn f(&self) -> Box<dyn FnMut(Vec<ValType>) -> ValType > {
-        Box::new( |x:Vec<ValType>| {
-            assert!( x.len() > 1 );
-            match (x[0],x[1]){
-                (ValType::F(v0),ValType::F(v1)) => { ValType::F(v0-v1) },
-                (ValType::I(v0),ValType::I(v1)) => { ValType::I(v0-v1) },
-                _ => {panic!("type not supported");},
+    fn f(&self) -> Box<dyn FnMut(Vec<(ValType,bool)>,Option<ValType>) -> ValType > {
+        Box::new( move |_x:Vec<(ValType,bool)>,v:Option<ValType>| {
+            v.expect("leaf value missing")
+        } )
+    }
+    fn g(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
+        Box::new( move |_args: Vec<PtrVWrap>,self_ptr:&PtrVWrap| {
+            VWrap::new_with_input( OpLink::new(), vec![self_ptr.clone()] )
+        })
+    }
+}
+
+impl FWrap for OpLink {
+    fn new() -> Box<dyn FWrap> where Self: Sized {
+        Box::new( OpLink{} )
+    }
+    fn f(&self) -> Box<dyn FnMut(Vec<(ValType,bool)>,Option<ValType>) -> ValType > {
+        Box::new( move |x:Vec<(ValType,bool)>,_v:Option<ValType>| {
+            assert!(x.len()==1);
+            if x[0].1 { //indicator for calculating gradient of the linked variable
+                ValType::F(1.)
+            } else {
+                ValType::F(0.)
             }
         } )
     }
-    fn primal(&self) -> Box<dyn Var>{
-        Self::new()
-    }
-    fn dual(&self, args: Vec<PtrWrap> ) -> PtrWrap {
-
-        //apply rule: (a-b-c-...)' = a'-b'-c'+...
-        
-        let mut inp_dual = vec![];
-        
-        for i in args.iter() {
-            let w = i.borrow_mut();
-            let d = w.dual();
-            inp_dual.push(d);
-        }
-
-        assert!( inp_dual.len() > 0 );
-
-        let count = inp_dual.len();
-        
-        if count > 1 {
-            for i in 1..count {   
-                let temp = Rc::new( RefCell::new( Wrap{
-                    inp: vec![ inp_dual[i-1].clone(), inp_dual[i].clone() ],
-                    raw: OpSub::new(),
-                } ) );
-
-                inp_dual[i] = temp;
-            }
-        }
-        inp_dual[count-1].clone()
+    fn g(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
+        Box::new( move |_args: Vec<PtrVWrap>,self_ptr:&PtrVWrap| {
+            VWrap::new_with_val( OpZero::new(), ValType::F(0.) )
+        })
     }
 }
 
-impl Var for OpPowi {
-    fn new() -> Box<dyn Var> where Self: Sized {
-        Box::new( OpPowi{} )
+impl FWrap for OpConst {
+    fn new() -> Box<dyn FWrap> where Self: Sized {
+        Box::new( OpConst{} )
     }
-    fn f(&self) -> Box<dyn FnMut(Vec<ValType>) -> ValType > {
-        Box::new( |x:Vec<ValType>| {
-            assert!( x.len() >= 2 );
-            //x[0]^x[1]
-            match (x[0],x[1]) {
-                (ValType::F(v0), ValType::I(v1)) => ValType::F(v0.powi(v1)),
-                _ => { panic!("type not supported"); }
-            }
+    fn f(&self) -> Box<dyn FnMut(Vec<(ValType,bool)>,Option<ValType>) -> ValType > {
+        Box::new( move |_x:Vec<(ValType,bool)>,v:Option<ValType>| {
+            v.expect("leaf value missing")
         } )
     }
-    fn primal(&self) -> Box<dyn Var>{
-        Self::new()
-    }
-    fn dual(&self, args: Vec<PtrWrap> ) -> PtrWrap {
-
-        //apply rule: (a^b)'=(b)(a^(b-1))(a') where b is an integer
-        //x[0]=a, x[1]=b
-
-        assert!( args.len() >= 2 );
-        
-        let mut inp_dual = vec![];
-        
-        for i in args.iter() {
-            let w = i.borrow_mut();
-            let d = w.dual();
-            inp_dual.push(d);
-        }
-
-        let a = args[0].clone();
-        let a_prime = inp_dual[0].clone();
-        let b = args[1].clone();
-        
-        let temp = Rc::new( RefCell::new( Wrap{
-            inp: vec![a, Sub(b.clone(),Consti(1))],
-            raw: OpPowi::new(),
-        } ) );
-
-        let temp2 = Mul(b, Mul(temp,a_prime));
-        temp2
+    fn g(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
+        Box::new( move |_args: Vec<PtrVWrap>,self_ptr:&PtrVWrap| {
+            VWrap::new_with_val( OpZero::new(), ValType::F(0.) )
+        })
     }
 }
 
+impl FWrap for OpOne {
+    fn new() -> Box<dyn FWrap> where Self: Sized {
+        Box::new( OpOne{} )
+    }
+    fn f(&self) -> Box<dyn FnMut(Vec<(ValType,bool)>,Option<ValType>) -> ValType > {
+        Box::new( move |_x:Vec<(ValType,bool)>,_v:Option<ValType>| {
+            //todo
+            ValType::F(1.)
+        } )
+    }
+    fn g(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
+        Box::new( move |_args: Vec<PtrVWrap>,self_ptr:&PtrVWrap| {
+            VWrap::new_with_val( OpZero::new(), ValType::F(0.) )
+        })
+    }
+}
+
+impl FWrap for OpZero {
+    fn new() -> Box<dyn FWrap> where Self: Sized {
+        Box::new( OpZero{} )
+    }
+    fn f(&self) -> Box<dyn FnMut(Vec<(ValType,bool)>,Option<ValType>) -> ValType > {
+        Box::new( move |_x:Vec<(ValType,bool)>,_v:Option<ValType>| {
+            //todo
+            ValType::F(0.)
+        } )
+    }
+    fn g(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
+        Box::new( move |_args: Vec<PtrVWrap>,self_ptr:&PtrVWrap| {
+            VWrap::new_with_val( OpZero::new(), ValType::F(0.) )
+        })
+    }
+}
+
 #[allow(dead_code)]
-fn Const( inp: f32 ) -> PtrWrap {
-    let a = Wrap::new( OpConst::new_with( inp ) );
+fn Mul( arg0: PtrVWrap, arg1: PtrVWrap ) -> PtrVWrap {
+    let mut a = VWrap::new( OpMul::new() );
+    a.set_inp( vec![ arg0, arg1 ] );
     a
 }
 
 #[allow(dead_code)]
-fn Consti( inp: i32 ) -> PtrWrap {
-    let a = Wrap::new( OpConsti::new_with( inp ) );
+fn Add( arg0: PtrVWrap, arg1: PtrVWrap ) -> PtrVWrap {
+    let mut a = VWrap::new( OpAdd::new() );
+    a.set_inp( vec![ arg0, arg1 ] );
     a
 }
 
 #[allow(dead_code)]
-fn Sin( inp: PtrWrap ) -> PtrWrap {
-    let a = Wrap::new( OpSin::new() );
-    a.borrow_mut().set_inp( vec![ inp.clone() ] );
+fn Leaf( arg0: ValType ) -> PtrVWrap {
+    let a = VWrap::new_with_val( OpLeaf::new(), arg0 );
     a
 }
 
-#[allow(dead_code)]
-fn Cos( inp: PtrWrap ) -> PtrWrap {
-    let a = Wrap::new( OpCos::new() );
-    a.borrow_mut().set_inp( vec![ inp.clone() ] );
-    a
-}
-
-#[allow(dead_code)]
-fn Mul( arg0: PtrWrap, arg1: PtrWrap ) -> PtrWrap {
-    let a = Wrap::new( OpMul::new() );
-    a.borrow_mut().set_inp( vec![ arg0, arg1 ] );
-    a
-}
-
-#[allow(dead_code)]
-fn Add( arg0: PtrWrap, arg1: PtrWrap ) -> PtrWrap {
-    let a = Wrap::new( OpAdd::new() );
-    a.borrow_mut().set_inp( vec![ arg0, arg1 ] );
-    a
-}
-
-#[allow(dead_code)]
-fn Sub( arg0: PtrWrap, arg1: PtrWrap ) -> PtrWrap {
-    let a = Wrap::new( OpSub::new() );
-    a.borrow_mut().set_inp( vec![ arg0, arg1 ] );
-    a
-}
-
-#[allow(dead_code)]
-fn Powi( base: PtrWrap, exponent: PtrWrap ) -> PtrWrap {
-    let a = Wrap::new( OpPowi::new() );
-    a.borrow_mut().set_inp( vec![ base, exponent ] );
-    a
-}
-
-#[allow(dead_code)]
-fn X( inp: f32 ) -> PtrWrap {
-    let a = Wrap::new( OpX::new() );
-    let b = Mul(a,Const(inp));
-    b
-}
-
-#[allow(dead_code)]
-#[cfg(test)]
-fn test_fun_1( a: PtrWrap, b: PtrWrap ) -> PtrWrap {
-    Mul(a.clone(),Add(a.clone(),b.clone()))
-}
+#[test]
+fn test(){
     
-#[test]
-fn test_helper_function() {
+    // let mut l0 = Leaf( ValType::F(4.) ).active();
+    // let mut l1 = Leaf( ValType::F(3.) ).active();
+    // let mut a = Mul( l0.clone(), l1.clone() );
 
-    let mut c = X(3.);
+    // let mut b = a.grad();
+    
+    // let c = b.apply_fwd();
+    // dbg!(c);
 
-    for i in 0..3 {
-        c = test_fun_1( Const(3.), c );
+    // l0.set_val( ValType::F(2.) );
+    // let d = b.apply_fwd();
+    // dbg!(d);
+
+    let mut l0 = Leaf( ValType::F(2.) ).active();
+
+    let mut l = l0.clone();
+    for _ in 0..10{
+        l = Mul( l, Leaf( ValType::F(2.) ) );
     }
 
-    let ans = c.borrow().eval();
-    dbg!(&ans);
+    dbg!(l.apply_fwd());
+    
+    let mut g = l.grad();
+    let h = g.apply_fwd();
+    dbg!(h);
+    
+    // let mut l0 = Leaf( ValType::F(4.) );
+    // let mut a = Mul( Mul( l0.clone(), l0.clone() ), l0.clone() );
 
-    let ans2 = c.borrow().dual().borrow().eval();
-    dbg!(ans2);
-}
+    // let mut b = a.grad().grad().grad();
+    
+    // let c = b.apply_fwd();
+    // dbg!(c);
 
-#[test]
-fn test_sin() {
-    let a = X(2.);
-    let c = Sin(a);
-    let ans = c.borrow().dual().borrow().eval();
-    dbg!(&ans);
-    let ans2 = c.borrow().dual().borrow().dual().borrow().eval();
-    dbg!(&ans2);
-}
-
-#[test]
-fn test_powi() {
-    let a = X(4.);
-    let c = Powi(a,Consti(1));
-    let dc = c.borrow().dual().borrow().eval();
-    let ddc = c.borrow().dual().borrow().dual().borrow().eval();
-    dbg!(&dc);
-    dbg!(&ddc);
+    //todo: reverse mode
 }

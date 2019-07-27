@@ -16,6 +16,7 @@ readme = "README.md"
 # num = "0.1.41"
 # crossbeam = "0.4.1"
 # ndarray = "0.12.1"
+lazy_static = ""
 
 [lib]
 name = "dyncomp"
