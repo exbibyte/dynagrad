@@ -1,5 +1,7 @@
+//! An implementation of dynamic automatic differentiation
+//! with forward and reverse modes
+
 #![allow(non_snake_case)]
-/// An implementation of dynamic automatic differentiation
 
 use std::rc::{Rc};
 use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
@@ -35,6 +37,12 @@ pub struct VWrap {
     pub id: i32,
 
     pub eval_g: bool,
+
+    /// adjoint accumulation expression
+    pub adj_accum: Option<PtrVWrap>,
+
+    // /// adjoint accumulation value at fixpoint
+    // pub adj_accum_val: f32,
 }
 
 /// initializer functions
@@ -48,6 +56,7 @@ impl VWrap {
             val: None,
             id: get_id(),
             eval_g: false,
+            adj_accum: None,
         } ) ) )
     }
 
@@ -58,6 +67,7 @@ impl VWrap {
             val: None,
             id: get_id(),
             eval_g: false,
+            adj_accum: None,
         } ) ) )
     }
 
@@ -68,6 +78,7 @@ impl VWrap {
             val: Some(val),
             id: get_id(),
             eval_g: false,
+            adj_accum: None,
         } ) ) )
     }
 }
@@ -81,7 +92,8 @@ impl PtrVWrap {
     fn set_val( & mut self, v: ValType ) {
         self.0.borrow_mut().val = Some(v);
     }
-    
+
+    /// forward mode (tanget-linear)
     fn apply_fwd(& mut self) -> ValType {
         
         let mut args : Vec<(ValType,bool)> = vec![];
@@ -98,10 +110,68 @@ impl PtrVWrap {
 
         v
     }
+
+    /// reverse mode (adjoint)
+    fn apply_rev(& mut self) -> ValType {
+        unimplemented!();
+    }
+
+    /// create adjoint graph starting from current variable and go through input dependencies
+    ///
+    /// resulting sensitivity graphs are propagated to leaf nodes' adjoint accumulation
+    /// where it can be collected
+    fn rev(&self) {
+        
+        use std::collections::VecDeque;
+        
+        let mut q = VecDeque::new();
+        
+        //initialization of sensitity=1 for starting node
+        self.0.borrow_mut().adj_accum = Some(VWrap::new( OpOne::new() ));
+        
+        q.push_back(self.clone());
+
+        //breadth-first
+        while !q.is_empty(){
+            
+            let mut n = q.pop_front().unwrap();
+
+            if n.0.borrow_mut().adj_accum.is_none(){
+                n.0.borrow_mut().adj_accum = Some(VWrap::new( OpZero::new() ));
+            }
+
+            //delegate adjoint calc to operation
+            let mut f = n.0.borrow().raw.adjoint();
+            let mut adjoints = f( n.0.borrow().inp.clone(),
+                                  n.0.borrow().adj_accum.as_ref().expect("adj_accum empty").clone(),
+                                  &n );
+
+            assert_eq!( adjoints.len(), n.0.borrow().inp.len() );
+            
+            //propagate adjoints to inputs
+            let l = adjoints.len();
+            for idx in 0..l {
+                if n.0.borrow_mut().inp[idx].0.borrow_mut().adj_accum.is_none(){
+                    n.0.borrow_mut().inp[idx].0.borrow_mut().adj_accum = Some(VWrap::new( OpZero::new() ));
+                }
+                n.0.borrow_mut().inp[idx].0.borrow_mut().adj_accum = Some( Add(
+                    n.0.borrow_mut().inp[idx].0.borrow().adj_accum.as_ref().unwrap().clone(),
+                    adjoints[idx].clone() ) );
+            }
+            
+            //reset adjoint accumulation for current node to zero
+            n.0.borrow_mut().adj_accum = None;
+
+            //do adjoints for inputs
+            for i in n.0.borrow().inp.iter() {
+                q.push_back(i.clone());
+            }
+        }
+    }
     
-    //create a gradient function wrt. to the current variable
-    pub fn grad(&self) -> PtrVWrap {
-        let mut g = self.0.borrow().raw.g();
+    //create tangent-linear starting from current variable
+    pub fn fwd(&self) -> PtrVWrap {
+        let mut g = self.0.borrow().raw.tangent();
         let ret = g( self.0.borrow().inp.clone(), self );
         ret
     }
@@ -110,15 +180,6 @@ impl PtrVWrap {
         self.0.borrow_mut().eval_g = true;
         self.clone()
     }
-    
-    // pub fn deep_clone(&self) -> PtrVWrap {
-    //     PtrVWrap( Rc::new( RefCell::new( VWrap {
-    //         inp: vec![],
-    //         raw: OpConst::new(),
-    //         val: self.0.borrow().val,
-    //         id: get_id(),
-    //     } ) ) )
-    // }
 }
 
 /// wrapper for function
@@ -126,13 +187,17 @@ trait FWrap : std::fmt::Debug {
     
     fn new() -> Box<dyn FWrap > where Self: Sized;
 
-    ///creates a function to evaluate given values
+    /// creates a function to evaluate given values
     fn f(&self) -> Box<dyn FnMut(Vec<(ValType,bool)>, Option<ValType>) -> ValType >;
 
-    ///creates gradient function with given input dependencies and returns wrapped variable
-    fn g(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, &PtrVWrap) -> PtrVWrap >;
+    /// creates linear tangent function with given input dependencies and returns wrapped variable
+    /// used in forward mode
+    fn tangent(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, &PtrVWrap) -> PtrVWrap >;
 
-    // fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, &PtrVWrap) -> PtrVWrap >;
+    /// creates function to compute the adjoint for the input dependencies
+    /// used in reverse mode
+    fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>/*inputs*/, PtrVWrap/*accumulated adjoint*/, &PtrVWrap/*self*/) -> Vec<PtrVWrap> >;
+
 }
 
 #[derive(Debug,Clone,Copy)]
@@ -168,19 +233,19 @@ impl FWrap for OpMul {
             }
         } )
     }
-    fn g(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
+    fn tangent(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
         Box::new( move |args:Vec<PtrVWrap>,_:&PtrVWrap| {
             
             assert!(args.len()==2);
             
             //apply chain rule: (xy)' = x'y + xy'
 
-            let a_prime = args[0].grad();
+            let a_prime = args[0].fwd();
             let m1 = VWrap::new_with_input( OpMul::new(),
                                             vec![ a_prime,
                                                   args[1].clone() ] );
 
-            let b_prime = args[1].grad();
+            let b_prime = args[1].fwd();
             let m2 = VWrap::new_with_input( OpMul::new(),
                                             vec![ args[0].clone(),
                                                   b_prime ] );
@@ -189,6 +254,9 @@ impl FWrap for OpMul {
                                    vec![ m1, m2 ] )
         })
     }
+    fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, PtrVWrap, &PtrVWrap) -> Vec<PtrVWrap> > {
+        unimplemented!();
+    }    
 }
 
 impl FWrap for OpAdd {
@@ -205,7 +273,7 @@ impl FWrap for OpAdd {
             }
         } )
     }
-    fn g(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
+    fn tangent(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
 
         Box::new( move |args: Vec<PtrVWrap>,_:&PtrVWrap| {
 
@@ -214,7 +282,7 @@ impl FWrap for OpAdd {
             let mut inp_grad = vec![];
             
             for i in args.iter() {
-                let d = i.grad();
+                let d = i.fwd();
                 inp_grad.push(d);
             }
 
@@ -236,6 +304,9 @@ impl FWrap for OpAdd {
             inp_grad[count-1].clone()
         })
     }
+    fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, PtrVWrap, &PtrVWrap) -> Vec<PtrVWrap> > {
+        unimplemented!();
+    }
 }
 
 impl FWrap for OpLeaf {
@@ -247,10 +318,13 @@ impl FWrap for OpLeaf {
             v.expect("leaf value missing")
         } )
     }
-    fn g(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
+    fn tangent(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
         Box::new( move |_args: Vec<PtrVWrap>,self_ptr:&PtrVWrap| {
             VWrap::new_with_input( OpLink::new(), vec![self_ptr.clone()] )
         })
+    }
+    fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, PtrVWrap, &PtrVWrap) -> Vec<PtrVWrap> > {
+        unimplemented!();
     }
 }
 
@@ -268,10 +342,13 @@ impl FWrap for OpLink {
             }
         } )
     }
-    fn g(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
+    fn tangent(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
         Box::new( move |_args: Vec<PtrVWrap>,self_ptr:&PtrVWrap| {
             VWrap::new_with_val( OpZero::new(), ValType::F(0.) )
         })
+    }
+    fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, PtrVWrap, &PtrVWrap) -> Vec<PtrVWrap> > {
+        unimplemented!();
     }
 }
 
@@ -284,10 +361,13 @@ impl FWrap for OpConst {
             v.expect("leaf value missing")
         } )
     }
-    fn g(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
+    fn tangent(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
         Box::new( move |_args: Vec<PtrVWrap>,self_ptr:&PtrVWrap| {
             VWrap::new_with_val( OpZero::new(), ValType::F(0.) )
         })
+    }
+    fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, PtrVWrap, &PtrVWrap) -> Vec<PtrVWrap> > {
+        unimplemented!();
     }
 }
 
@@ -301,10 +381,13 @@ impl FWrap for OpOne {
             ValType::F(1.)
         } )
     }
-    fn g(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
+    fn tangent(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
         Box::new( move |_args: Vec<PtrVWrap>,self_ptr:&PtrVWrap| {
             VWrap::new_with_val( OpZero::new(), ValType::F(0.) )
         })
+    }
+    fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, PtrVWrap, &PtrVWrap) -> Vec<PtrVWrap> > {
+        unimplemented!();
     }
 }
 
@@ -318,10 +401,13 @@ impl FWrap for OpZero {
             ValType::F(0.)
         } )
     }
-    fn g(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
+    fn tangent(&self) -> Box<dyn FnMut(Vec<PtrVWrap>,&PtrVWrap) -> PtrVWrap > {
         Box::new( move |_args: Vec<PtrVWrap>,self_ptr:&PtrVWrap| {
             VWrap::new_with_val( OpZero::new(), ValType::F(0.) )
         })
+    }
+    fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, PtrVWrap, &PtrVWrap) -> Vec<PtrVWrap> > {
+        unimplemented!();
     }
 }
 
@@ -352,7 +438,7 @@ fn test(){
     // let mut l1 = Leaf( ValType::F(3.) ).active();
     // let mut a = Mul( l0.clone(), l1.clone() );
 
-    // let mut b = a.grad();
+    // let mut b = a.fwd();
     
     // let c = b.apply_fwd();
     // dbg!(c);
@@ -364,20 +450,20 @@ fn test(){
     let mut l0 = Leaf( ValType::F(2.) ).active();
 
     let mut l = l0.clone();
-    for _ in 0..10{
+    for _ in 0..10 {
         l = Mul( l, Leaf( ValType::F(2.) ) );
     }
 
     dbg!(l.apply_fwd());
     
-    let mut g = l.grad();
+    let mut g = l.fwd();
     let h = g.apply_fwd();
     dbg!(h);
     
     // let mut l0 = Leaf( ValType::F(4.) );
     // let mut a = Mul( Mul( l0.clone(), l0.clone() ), l0.clone() );
 
-    // let mut b = a.grad().grad().grad();
+    // let mut b = a.fwd().fwd().fwd();
     
     // let c = b.apply_fwd();
     // dbg!(c);
