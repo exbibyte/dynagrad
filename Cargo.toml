@@ -1,22 +1,23 @@
 [package]
-name = "infer"
+name = "dyncomp"
 version = "0.2.0"
 authors = ["Yuan Liu <yuan6liu@gmail.com>"]
 edition = "2018"
 description = "Tools for gradient based methods."
-repository = "https://github.com/clearlycloudy/infer/"
+repository = "https://github.com/clearlycloudy/dyncomp/"
 keywords = [ "autograd" ]
 license = "BSD-2-Clause"
-documentation = "https://docs.rs/infer/0.2.0/infer/"
+documentation = "https://docs.rs/dyncomp/"
 readme = "README.md"
 
 [dependencies]
-rand = "0.5.5"
-chrono = "0.4.0"
-num = "0.1.41"
-mazth = "0.0.0"
-crossbeam = "0.4.1"
+# rand = "0.5.5"
+# chrono = "0.4.0"
+# num = "0.1.41"
+# crossbeam = "0.4.1"
+# ndarray = "0.12.1"
+lazy_static = ""
 
 [lib]
-name = "infer"
-path = "src/mod.rs"
+name = "dyncomp"
+path = "src/lib.rs"
