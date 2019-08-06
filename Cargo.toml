@@ -1,13 +1,13 @@
 [package]
-name = "dyncomp"
-version = "0.2.0"
+name = "dynagrad"
+version = "0.3.0"
 authors = ["Yuan Liu <yuan6liu@gmail.com>"]
 edition = "2018"
-description = "Tools for gradient based methods."
-repository = "https://github.com/clearlycloudy/dyncomp/"
-keywords = [ "autograd" ]
+description = "Dynamic Auto-differentiation."
+repository = "https://github.com/clearlycloudy/dynagrad/"
+keywords = [ "autograd", "auto-differentiation" ]
 license = "BSD-2-Clause"
-documentation = "https://docs.rs/dyncomp/"
+documentation = "https://docs.rs/dynagrad/"
 readme = "README.md"
 
 [dependencies]
