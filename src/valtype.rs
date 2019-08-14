@@ -13,3 +13,14 @@ impl fmt::Display for ValType {
         write!( f, "{:?}", self )
     }
 }
+
+impl From<ValType> for f32 {
+    fn from(s: ValType) -> Self {
+        match s {
+            ValType::F(x) => x as f32,
+            ValType::D(x) => x as f32,
+            ValType::I(x) => x as f32,
+            ValType::L(x) => x as f32,
+        }
+    }
+}

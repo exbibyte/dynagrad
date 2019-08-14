@@ -12,10 +12,12 @@ pub struct PtrVWrap(pub Rc<RefCell<VWrap>>);
 
 use crate::valtype::ValType;
 
+#[cfg(test)]
 lazy_static! {
     static ref ID: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
 }
 
+#[cfg(test)]
 fn get_id() -> i32 {
     ID.fetch_add(1,Ordering::SeqCst) as _
 }
@@ -33,7 +35,7 @@ pub struct VWrap {
     /// evaluted value
     pub val: Option<ValType>,
 
-    /// for debugging
+    #[cfg(test)]
     pub id: i32,
 
     pub eval_g: bool,
@@ -44,8 +46,15 @@ pub struct VWrap {
 use std::fmt;
 
 impl fmt::Debug for VWrap {
+    #[cfg(test)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "VWrap {{ inp: {:#?}, raw:: {:?}, val: {:?}, id: {:?}, eval_g: {:?} }}", self.inp, self.raw, self.val, self.id, self.eval_g )
+        writeln!( f, "VWrap {{ inp: {:#?}, raw:: {:?}, val: {:?}, id: {:?}, eval_g: {:?} }}",
+                  self.inp, self.raw, self.val, self.id, self.eval_g )
+    }
+    #[cfg(not(test))]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!( f, "VWrap {{ inp: {:#?}, raw:: {:?}, val: {:?}, eval_g: {:?} }}",
+                  self.inp, self.raw, self.val, self.eval_g )
     }
 }
 
@@ -59,6 +68,7 @@ impl VWrap {
             inp: vec![],
             raw: v,
             val: None,
+            #[cfg(test)]
             id: get_id(),
             eval_g: false,
             adj_accum: None,
@@ -70,6 +80,7 @@ impl VWrap {
             inp: v,
             raw: f,
             val: None,
+            #[cfg(test)]
             id: get_id(),
             eval_g: false,
             adj_accum: None,
@@ -81,6 +92,7 @@ impl VWrap {
             inp: vec![],
             raw: v,
             val: Some(val),
+            #[cfg(test)]
             id: get_id(),
             eval_g: false,
             adj_accum: None,
@@ -94,12 +106,12 @@ impl PtrVWrap {
         self.0.borrow_mut().inp = v;
     }
 
-    fn set_val( & mut self, v: ValType ) {
+    pub fn set_val( & mut self, v: ValType ) {
         self.0.borrow_mut().val = Some(v);
     }
 
     /// forward mode (tanget-linear)
-    fn apply_fwd(& mut self) -> ValType {
+    pub fn apply_fwd(& mut self) -> ValType {
         
         let mut args : Vec<(ValType,bool)> = vec![];
 
@@ -136,7 +148,7 @@ impl PtrVWrap {
     }
     
     /// reverse mode (adjoint)
-    fn apply_rev_for_adjoint(& mut self) -> ValType {
+    pub fn apply_rev_for_adjoint(& mut self) -> ValType {
 
         let mut adj = self.adjoint().expect("adjoint empty");
             
@@ -145,11 +157,16 @@ impl PtrVWrap {
         v
     }
 
+    /// obtain adjoint for target and reset accumulated adjoints
+    pub fn reve(&self, target: PtrVWrap ) -> PtrVWrap {
+        unimplemented!();
+    }
+
     /// create adjoint graph starting from current variable and go through input dependencies
     ///
     /// resulting sensitivity graphs are propagated to leaf nodes' adjoint accumulation
     /// where it can be collected
-    fn rev(&self) {
+    pub fn rev(&self) {
         
         use std::collections::VecDeque;
         
@@ -215,21 +232,21 @@ impl PtrVWrap {
         ret
     }
 
-    fn active(&mut self) -> Self {
+    pub fn active(&mut self) -> Self {
         self.0.borrow_mut().eval_g = true;
         self.clone()
     }
 
-    fn inactive(&mut self) -> Self {
+    pub fn inactive(&mut self) -> Self {
         self.0.borrow_mut().eval_g = false;
         self.clone()
     }
 
-    fn adjoint(&self) -> Option<PtrVWrap> {
+    pub fn adjoint(&self) -> Option<PtrVWrap> {
         self.0.borrow().adj_accum.clone()
     }
 
-    fn reset_adjoint(& mut self){
+    pub fn reset_adjoint(& mut self){
         self.0.borrow_mut().adj_accum = None;
     }
 }
@@ -488,23 +505,28 @@ impl FWrap for OpZero {
 }
 
 #[allow(dead_code)]
-fn Mul( arg0: PtrVWrap, arg1: PtrVWrap ) -> PtrVWrap {
+pub fn Mul( arg0: PtrVWrap, arg1: PtrVWrap ) -> PtrVWrap {
     let mut a = VWrap::new( OpMul::new() );
     a.set_inp( vec![ arg0, arg1 ] );
     a
 }
 
 #[allow(dead_code)]
-fn Add( arg0: PtrVWrap, arg1: PtrVWrap ) -> PtrVWrap {
+pub fn Add( arg0: PtrVWrap, arg1: PtrVWrap ) -> PtrVWrap {
     let mut a = VWrap::new( OpAdd::new() );
     a.set_inp( vec![ arg0, arg1 ] );
     a
 }
 
 #[allow(dead_code)]
-fn Leaf( arg0: ValType ) -> PtrVWrap {
+pub fn Leaf( arg0: ValType ) -> PtrVWrap {
     let a = VWrap::new_with_val( OpLeaf::new(), arg0 );
     a
+}
+
+#[cfg(test)]
+fn eq_f32( a:f32, b:f32 ) -> bool {
+    (a-b).abs() < 0.01
 }
 
 #[test]
@@ -517,12 +539,18 @@ fn test_loop_fwd(){
         l = Mul( l, Leaf( ValType::F(2.) ) );
     }
 
-    dbg!(l.apply_fwd());
+    let vl = l.apply_fwd();
+    
+    dbg!(vl);
+
+    assert!(eq_f32(vl.into(),2048.));
     
     let mut g = l.fwd();
     let h = g.apply_fwd();
     
     dbg!(h);
+    
+    assert!(eq_f32(h.into(),1024.));
 }
 
 #[test]
@@ -530,7 +558,7 @@ fn test_simple_fwd(){
     
     //(3x)' = 3
     
-    let mut l0 = Leaf( ValType::F(4.) ).active();
+    let mut l0 = Leaf( ValType::F(4.) ).active(); 
     let mut l1 = Leaf( ValType::F(3.) );
     let mut a = Mul( l0.clone(), l1.clone() );
 
@@ -539,6 +567,8 @@ fn test_simple_fwd(){
     let c = b.apply_fwd();
     
     dbg!(c);
+
+    assert!(eq_f32(c.into(),3.));
 }
 
 #[test]
@@ -554,8 +584,27 @@ fn test_square_fwd(){
     let c = b.apply_fwd();
 
     dbg!(&c);
-
+    
     // dbg!( &l0 );
+
+    assert!(eq_f32(c.into(),24.));
+}
+
+#[test]
+fn test_square_fwd_2(){
+
+    //(x(4)^2)' = 16
+    let mut l0 = Leaf( ValType::F(4.) );
+    let mut l1 = Leaf( ValType::F(3.) ).active();
+    let mut a = Mul( Mul( l0.clone(), l0.clone() ), l1);
+
+    let mut b = a.fwd();
+    
+    let c = b.apply_fwd();
+
+    dbg!(&c);
+
+    assert!(eq_f32(c.into(),16.));
 }
 
 #[test]
@@ -575,6 +624,8 @@ fn test_simple_rev(){
     
     let ret = l0.apply_rev_for_adjoint();
     dbg!(ret);
+
+    assert!(eq_f32(ret.into(),3.));
 }
 
 #[test]
@@ -596,6 +647,27 @@ fn test_simple_rev_2(){
     let ret = l0.apply_rev_for_adjoint();
     
     dbg!(&ret);
+
+    assert!(eq_f32(ret.into(),24.));
+}
+
+#[test]
+fn test_composite_fwd_over_fwd(){
+
+    //y=3*x^2 where x=4
+    //compute y'' = (6x)' = 6
+   
+    let mut l0 = Leaf( ValType::F(4.) ).active();
+    let mut l1 = Leaf( ValType::F(3.) );
+    let mut a = Mul( Mul( l0.clone(), l0.clone()), l1.clone() );
+    
+    let mut gg = a.fwd().fwd();
+    
+    let ret = gg.apply_fwd();
+    
+    dbg!(&ret);
+
+    assert!(eq_f32(ret.into(),6.));
 }
 
 #[test]
@@ -617,6 +689,8 @@ fn test_composite_fwd_over_rev(){
     let ret = g.apply_fwd();
     
     dbg!(&ret);
+
+    assert!(eq_f32(ret.into(),0.));
 }
 
 #[test]
@@ -638,6 +712,8 @@ fn test_composite_fwd_over_rev_2(){
     let ret = g.apply_fwd();
     
     dbg!(&ret);
+
+    assert!(eq_f32(ret.into(),6.));
 }
 
 #[test]
@@ -663,28 +739,155 @@ fn test_composite_rev_over_rev(){
     let ret = l0.apply_rev_for_adjoint();
     
     dbg!(&ret);
+
+    assert!(eq_f32(ret.into(),6.));
 }
 
 #[test]
 fn test_composite_rev_over_fwd(){
 
     //(3x^2)'' = 6
-
+    
     let mut l0 = Leaf( ValType::F(4.) ).active();
     let mut l1 = Leaf( ValType::F(3.) );
     let mut a = Mul( Mul( l0.clone(), l0.clone()), l1.clone() );
 
     let mut g = a.fwd();
 
-    l0.reset_adjoint();
-    l1.reset_adjoint();
-
-    // dbg!(&g);
+    // l0.reset_adjoint();
+    // l1.reset_adjoint();
     
     g.rev();
         
     let ret = l0.apply_rev_for_adjoint();
     
     dbg!(&ret);
+
+    assert!(eq_f32(ret.into(),6.));
 }
 
+#[test]
+fn test_composite_rev_over_fwd_change_input(){
+
+    //(3x^2)'' = 6
+    
+    let mut l0 = Leaf( ValType::F(4.) ).active();
+    let mut l1 = Leaf( ValType::F(3.) );
+    let mut a = Mul( Mul( l0.clone(), l0.clone()), l1.clone() );
+
+    let mut g = a.fwd();
+
+    // l0.reset_adjoint();
+    // l1.reset_adjoint();
+    
+    g.rev();
+        
+    let ret = l0.apply_rev_for_adjoint();
+    
+    dbg!(&ret);
+
+    assert!(eq_f32(ret.into(),6.));
+
+    //change to (7x^2)''=(14x)'=14
+    l1.set_val( ValType::F(7.) );
+    
+    let ret2 = l0.apply_rev_for_adjoint();
+    
+    dbg!(&ret2);
+
+    assert!(eq_f32(ret2.into(),14.));
+}
+
+#[test]
+fn test_composite_rev_over_rev_change_input(){
+
+    //(3x^2)'' = 6
+    
+    let mut l0 = Leaf( ValType::F(4.) ).active();
+    let mut l1 = Leaf( ValType::F(3.) );
+    let mut a = Mul( Mul( l0.clone(), l0.clone()), l1.clone() );
+
+    a.rev();
+
+    let mut adj = l0.adjoint().expect("adjoint empty");
+
+    //todo: consider how to make temporary adjoint data reset possible automatically from user
+    l0.reset_adjoint();
+    l1.reset_adjoint();
+    
+    adj.rev();
+    
+    let ret = l0.apply_rev_for_adjoint();
+    
+    dbg!(&ret);
+
+    assert!(eq_f32(ret.into(),6.));
+    
+    //change to (7x^2)''=(14x)'=14
+    l1.set_val( ValType::F(7.) );
+
+    let ret2 = l0.apply_rev_for_adjoint();
+    
+    dbg!(&ret2);
+
+    assert!(eq_f32(ret2.into(),14.));
+}
+
+#[test]
+fn test_composite_fwd_over_rev_change_input(){
+
+    //(3x^2)'' = 6
+    
+    let mut l0 = Leaf( ValType::F(4.) ).active();
+    let mut l1 = Leaf( ValType::F(3.) );
+    let mut a = Mul( Mul( l0.clone(), l0.clone()), l1.clone() );
+
+    a.rev();
+
+    let mut adj = l0.adjoint().expect("adjoint empty");
+
+    let mut g = adj.fwd();
+    
+    let ret = g.apply_fwd();
+    
+    dbg!(&ret);
+
+    assert!(eq_f32(ret.into(),6.));
+    
+    //change to (7x^2)''=(14x)'=14
+    l1.set_val( ValType::F(7.) );
+
+    let ret2 = g.apply_fwd();
+    
+    dbg!(&ret2);
+
+    assert!(eq_f32(ret2.into(),14.));
+}
+
+#[test]
+fn test_composite_fwd_over_fwd_change_input(){
+
+    //y=3*x^2 where x=4
+    //compute y'' = (6x)' = 6
+   
+    let mut l0 = Leaf( ValType::F(4.) ).active();
+    let mut l1 = Leaf( ValType::F(3.) );
+    let mut a = Mul( Mul( l0.clone(), l0.clone()), l1.clone() );
+    
+    let mut gg = a.fwd().fwd();
+    
+    let ret = gg.apply_fwd();
+    
+    dbg!(&ret);
+
+    assert!(eq_f32(ret.into(),6.));
+
+    //change to (7x^2)''=(14x)'=14
+    l1.set_val( ValType::F(7.) );
+
+    let ret2 = gg.apply_fwd();
+    
+    dbg!(&ret2);
+
+    assert!(eq_f32(ret2.into(),14.));
+}
