@@ -12,7 +12,11 @@ Work in progress..
 # Todo:
 - Extend from scalar to vectors and matrices, possibly use ndarray or similar underneath.
 - more ops and tests
-- more ergonomics
+
+# Other:
+- currently depends on Rust nightly
+
+
 
 
 
