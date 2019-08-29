@@ -1,14 +1,37 @@
 //! An implementation of dynamic automatic differentiation
 //! with forward and reverse modes
-
 #![allow(non_snake_case)]
 
-use std::rc::{Rc};
+use std::borrow::{Borrow,BorrowMut};
+use std::rc::{Rc,Weak};
 use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
 use std::cell::RefCell;
+use std::hash::{Hasher,Hash};
+use std::cmp::{PartialEq,Eq};
+use std::collections::{HashMap,HashSet};
+use std::mem;
+use std::ops::Deref;
 
 #[derive(Clone,Debug)]
 pub struct PtrVWrap(pub Rc<RefCell<VWrap>>);
+
+impl Hash for PtrVWrap {
+    fn hash<H:Hasher>(&self, state: &mut H){
+
+        let p = Rc::downgrade(&self.0);
+        (Weak::as_raw(&p) as usize).hash(state);
+    }
+}
+
+impl PartialEq for PtrVWrap {
+    fn eq(&self, other:&Self) -> bool {
+        
+        //decay both to Weak and compare
+        Weak::ptr_eq(&Rc::downgrade(&self.0), &Rc::downgrade(&other.0))
+    }
+}
+
+impl Eq for PtrVWrap {}
 
 use crate::valtype::ValType;
 
@@ -64,6 +87,7 @@ impl fmt::Debug for VWrap {
 impl VWrap {
 
     fn new( v: Box<dyn FWrap> ) -> PtrVWrap {
+
         PtrVWrap( Rc::new( RefCell::new( VWrap {
             inp: vec![],
             raw: v,
@@ -76,6 +100,7 @@ impl VWrap {
     }
 
     fn new_with_input( f: Box<dyn FWrap>, v: Vec<PtrVWrap> ) -> PtrVWrap {
+
         PtrVWrap( Rc::new( RefCell::new( VWrap {
             inp: v,
             raw: f,
@@ -88,6 +113,7 @@ impl VWrap {
     }
 
     fn new_with_val( v: Box<dyn FWrap>, val: ValType ) -> PtrVWrap {
+        
         PtrVWrap( Rc::new( RefCell::new( VWrap {
             inp: vec![],
             raw: v,
@@ -101,13 +127,15 @@ impl VWrap {
 }
 
 impl PtrVWrap {
-
+    
     fn set_inp( & mut self, v: Vec<PtrVWrap> ) {
-        self.0.borrow_mut().inp = v;
+        
+        self.0.deref().borrow_mut().inp = v;
     }
 
     pub fn set_val( & mut self, v: ValType ) {
-        self.0.borrow_mut().val = Some(v);
+        
+        self.0.deref().borrow_mut().val = Some(v);
     }
 
     /// forward mode (tanget-linear)
@@ -116,14 +144,14 @@ impl PtrVWrap {
         let mut args : Vec<(ValType,bool)> = vec![];
 
         //recursive apply
-        for i in self.0.borrow_mut().inp.iter_mut() {
+        for i in self.0.deref().borrow_mut().inp.iter_mut() {
             let val = i.apply_fwd();
-            args.push((val, i.0.borrow().eval_g));
+            args.push((val, i.0.deref().borrow().eval_g));
         }
         
-        let v = self.0.borrow().raw.f()( args, self.0.borrow().val );
+        let v = self.0.deref().borrow().raw.f()( args, self.0.deref().borrow().val );
         
-        self.0.borrow_mut().val = Some(v);
+        self.0.deref().borrow_mut().val = Some(v);
 
         v
     }
@@ -132,27 +160,25 @@ impl PtrVWrap {
     fn apply_rev_recurse(& mut self) -> ValType {
         
         let mut args : Vec<(ValType,bool)> = vec![];
-
+        
         //recursive apply
-        for i in self.0.borrow_mut().inp.iter_mut() {
+        for i in self.0.deref().borrow_mut().inp.iter_mut() {
             let val = i.apply_rev_recurse();
-            let temp = i.0.borrow().eval_g;
+            let temp = i.0.deref().borrow().eval_g;
             args.push((val, temp));
         }
         
-        let v = self.0.borrow().raw.f()( args, self.0.borrow().val );
+        let v = self.0.deref().borrow().raw.f()( args, self.0.deref().borrow().val );
         
-        self.0.borrow_mut().val = Some(v);
+        self.0.deref().borrow_mut().val = Some(v);
         
         v
     }
     
     /// reverse mode (adjoint)
-    pub fn apply_rev_for_adjoint(& mut self) -> ValType {
-
-        let mut adj = self.adjoint().expect("adjoint empty");
+    pub fn apply_rev(& mut self) -> ValType {
             
-        let v = adj.apply_rev_recurse();
+        let v = self.apply_rev_recurse();
         
         v
     }
@@ -166,88 +192,109 @@ impl PtrVWrap {
     ///
     /// resulting sensitivity graphs are propagated to leaf nodes' adjoint accumulation
     /// where it can be collected
-    pub fn rev(&self) {
+    pub fn rev(&self) -> HashMap<PtrVWrap,PtrVWrap> {
         
         use std::collections::VecDeque;
         
         let mut q = VecDeque::new();
+
+        let mut adjoints_collected = HashMap::new();
         
         //initialization of sensitity=1 for starting node
-        self.0.borrow_mut().adj_accum = Some(VWrap::new( OpOne::new() ));
+        self.0.deref().borrow_mut().adj_accum = Some(VWrap::new( OpOne::new() ));
         
         q.push_back(self.clone());
 
+        let mut visited : HashSet<PtrVWrap> = HashSet::new();
+        
         //breadth-first
         while !q.is_empty(){
-
-            // println!("queue length: {}", q.len());
             
             let mut n = q.pop_front().unwrap();
 
-            if n.0.borrow_mut().adj_accum.is_none(){
-                n.0.borrow_mut().adj_accum = Some(VWrap::new( OpZero::new() ));
+            if visited.contains(&n) {
+                //skip already traversed nodes
+                continue;
+            }
+            
+            if n.0.deref().borrow_mut().adj_accum.is_none(){
+                n.0.deref().borrow_mut().adj_accum = Some(VWrap::new( OpZero::new() ));
             }
 
             //delegate adjoint calc to operation
             let mut adjoints = {
-            let mut f = n.0.borrow().raw.adjoint();
-                f( n.0.borrow().inp.clone(),
-                   n.0.borrow().adj_accum.as_ref().expect("adj_accum empty").clone(),
+                let mut f = n.0.deref().borrow().raw.adjoint();
+                f( n.0.deref().borrow().inp.clone(),
+                   n.0.deref().borrow().adj_accum.as_ref().expect("adj_accum empty").clone(),
                    &n )
             };
 
-            assert_eq!( adjoints.len(), n.0.borrow().inp.len() );
+            assert_eq!( adjoints.len(), n.0.deref().borrow().inp.len() );
             
             //propagate adjoints to inputs
             let l = adjoints.len();
             for idx in 0..l {
 
-                if n.0.borrow_mut().inp[idx].0.borrow_mut().adj_accum.is_none(){
-                    n.0.borrow_mut().inp[idx].0.borrow_mut().adj_accum = Some(VWrap::new( OpZero::new() ));
+                if n.0.deref().borrow_mut().inp[idx].0.deref().borrow_mut().adj_accum.is_none(){
+                    n.0.deref().borrow_mut().inp[idx].0.deref().borrow_mut().adj_accum = Some(VWrap::new( OpZero::new() ));
                 }
-
-                let temp = n.0.borrow().inp[idx].0.borrow().adj_accum.as_ref().unwrap().clone();
                 
-                n.0.borrow_mut().inp[idx].0.borrow_mut().adj_accum = Some( Add(
+                let temp = n.0.deref().borrow().inp[idx].0.deref().borrow().adj_accum.as_ref().unwrap().clone();
+
+                n.0.deref().borrow_mut().inp[idx].0.deref().borrow_mut().adj_accum = Some( Add(
                     temp,
                     adjoints[idx].clone() ) );
             }
             
             //reset adjoint accumulation for current node to zero
-            if !n.0.borrow().inp.is_empty(){
-                n.0.borrow_mut().adj_accum = None;
+            if !n.0.deref().borrow().inp.is_empty(){
+                //reset adjoints for internal nodes
+                n.0.deref().borrow_mut().adj_accum = None;
+            } else {
+                //collect adjoints for leaf nodes
+                let adj = n.0.deref().borrow_mut().adj_accum.take();
+                adjoints_collected.insert( n.clone(), adj.expect("leaf adjoint missing") );
             }
-
+            
             //do adjoints for inputs
-            for i in n.0.borrow().inp.iter() {
+            for i in n.0.deref().borrow().inp.iter() {
                 q.push_back(i.clone());
             }
+
+            visited.insert(n.clone());
         }
+
+        adjoints_collected
     }
     
     //create tangent-linear starting from current variable
     pub fn fwd(&self) -> PtrVWrap {
-        let mut g = self.0.borrow().raw.tangent();
-        let ret = g( self.0.borrow().inp.clone(), self );
+
+        let mut g = self.0.deref().borrow().raw.tangent();
+        let ret = g( self.0.deref().borrow().inp.clone(), self );
         ret
     }
 
     pub fn active(&mut self) -> Self {
-        self.0.borrow_mut().eval_g = true;
+        
+        self.0.deref().borrow_mut().eval_g = true;
         self.clone()
     }
 
     pub fn inactive(&mut self) -> Self {
-        self.0.borrow_mut().eval_g = false;
+        
+        self.0.deref().borrow_mut().eval_g = false;
         self.clone()
     }
 
     pub fn adjoint(&self) -> Option<PtrVWrap> {
-        self.0.borrow().adj_accum.clone()
+        
+        self.0.deref().borrow().adj_accum.clone()
     }
 
     pub fn reset_adjoint(& mut self){
-        self.0.borrow_mut().adj_accum = None;
+        
+        self.0.deref().borrow_mut().adj_accum = None;
     }
 }
 
@@ -341,7 +388,7 @@ impl FWrap for OpAdd {
     }
     fn f(&self) -> Box<dyn FnMut(Vec<(ValType,bool)>, Option<ValType>) -> ValType > {
         Box::new( move |x:Vec<(ValType,bool)>,_:Option<ValType>| {
-            assert!( x.len() == 2 );
+            assert_eq!( x.len(), 2 );
             match (x[0].0,x[1].0){
                 (ValType::F(v0),ValType::F(v1)) => { ValType::F(v0+v1) },
                 (ValType::I(v0),ValType::I(v1)) => { ValType::I(v0+v1) },
@@ -611,18 +658,12 @@ fn test_square_fwd_2(){
 fn test_simple_rev(){
 
     //(3x)' = 3
-    let mut l0 = Leaf( ValType::F(4.) ).active();
+    let mut l0 = Leaf( ValType::F(4.) );
     let mut l1 = Leaf( ValType::F(3.) );
     let mut a = Mul( l0.clone(), l1.clone() );
 
-    a.rev();
-    
-    // dbg!(&a);
-    
-    // let mut adj = l0.adjoint().expect("adjoint empty");
-    // dbg!(&adj);
-    
-    let ret = l0.apply_rev_for_adjoint();
+    let ret = a.rev().get_mut(&l0).expect("l0 adjoint missing").apply_rev();
+
     dbg!(ret);
 
     assert!(eq_f32(ret.into(),3.));
@@ -632,19 +673,11 @@ fn test_simple_rev(){
 fn test_simple_rev_2(){
 
     //(3x^2)' = 6x{x=4} = 24
-    let mut l0 = Leaf( ValType::F(4.) ).active();
+    let mut l0 = Leaf( ValType::F(4.) );
     let mut l1 = Leaf( ValType::F(3.) );
     let mut a = Mul( Mul( l0.clone(), l0.clone()), l1.clone() );
 
-    a.rev();
-
-    //fix this wrong result, expect 24, got 6
-    
-    let mut adj = l0.adjoint().expect("adjoint empty");
-    // dbg!(&adj);
-    // let ret = adj.apply_fwd();
-    
-    let ret = l0.apply_rev_for_adjoint();
+    let ret = a.rev().get_mut(&l0).expect("l0 adjoint missing").apply_rev();
     
     dbg!(&ret);
 
@@ -680,9 +713,9 @@ fn test_composite_fwd_over_rev(){
     let mut l1 = Leaf( ValType::F(3.) );
     let mut a = Mul( l0.clone(), l1.clone() );
 
-    a.rev();
+    let mut adjoints = a.rev();
     
-    let mut adj = l0.adjoint().expect("adjoint empty");
+    let mut adj = adjoints.get_mut(&l0).expect("l0 adjoint missing");
 
     let mut g = adj.fwd();
     
@@ -703,13 +736,7 @@ fn test_composite_fwd_over_rev_2(){
     let mut l1 = Leaf( ValType::F(3.) );
     let mut a = Mul( Mul( l0.clone(), l0.clone()), l1.clone() );
 
-    a.rev();
-    
-    let mut adj = l0.adjoint().expect("adjoint empty");
-
-    let mut g = adj.fwd();
-    
-    let ret = g.apply_fwd();
+    let ret = a.rev().get_mut(&l0).expect("l0 adjoint missing").fwd().apply_fwd();
     
     dbg!(&ret);
 
@@ -720,23 +747,13 @@ fn test_composite_fwd_over_rev_2(){
 fn test_composite_rev_over_rev(){
 
     //(3x^2)'' = 6
-    let mut l0 = Leaf( ValType::F(4.) ).active();
+    let mut l0 = Leaf( ValType::F(4.) );
     let mut l1 = Leaf( ValType::F(3.) );
     let mut a = Mul( Mul( l0.clone(), l0.clone()), l1.clone() );
 
-    a.rev();
-
-    let mut adj = l0.adjoint().expect("adjoint empty");
-
-    //todo: consider how to make temporary adjoint data reset possible automatically from user
-    l0.reset_adjoint();
-    l1.reset_adjoint();
-    
-    adj.rev();
-    
-    // let mut adj2 = l0.adjoint().expect("adjoint empty");
-    
-    let ret = l0.apply_rev_for_adjoint();
+    let ret = a.rev().get_mut(&l0).expect("l0 adjoint missing")
+        .rev().get_mut(&l0).expect("l0 adjoint missing")
+        .apply_rev();
     
     dbg!(&ret);
 
@@ -752,14 +769,9 @@ fn test_composite_rev_over_fwd(){
     let mut l1 = Leaf( ValType::F(3.) );
     let mut a = Mul( Mul( l0.clone(), l0.clone()), l1.clone() );
 
-    let mut g = a.fwd();
-
-    // l0.reset_adjoint();
-    // l1.reset_adjoint();
-    
-    g.rev();
-        
-    let ret = l0.apply_rev_for_adjoint();
+    let ret = a.fwd()
+        .rev().get_mut(&l0).expect("l0 adjoint missing")
+        .apply_rev();
     
     dbg!(&ret);
 
@@ -775,14 +787,10 @@ fn test_composite_rev_over_fwd_change_input(){
     let mut l1 = Leaf( ValType::F(3.) );
     let mut a = Mul( Mul( l0.clone(), l0.clone()), l1.clone() );
 
-    let mut g = a.fwd();
-
-    // l0.reset_adjoint();
-    // l1.reset_adjoint();
-    
-    g.rev();
+    let mut gg = a.fwd()
+        .rev().get_mut(&l0).expect("l0 adjoint missing").clone();
         
-    let ret = l0.apply_rev_for_adjoint();
+    let ret = gg.apply_rev();
     
     dbg!(&ret);
 
@@ -791,7 +799,7 @@ fn test_composite_rev_over_fwd_change_input(){
     //change to (7x^2)''=(14x)'=14
     l1.set_val( ValType::F(7.) );
     
-    let ret2 = l0.apply_rev_for_adjoint();
+    let ret2 = gg.apply_rev();
     
     dbg!(&ret2);
 
@@ -803,21 +811,14 @@ fn test_composite_rev_over_rev_change_input(){
 
     //(3x^2)'' = 6
     
-    let mut l0 = Leaf( ValType::F(4.) ).active();
+    let mut l0 = Leaf( ValType::F(4.) );
     let mut l1 = Leaf( ValType::F(3.) );
     let mut a = Mul( Mul( l0.clone(), l0.clone()), l1.clone() );
 
-    a.rev();
-
-    let mut adj = l0.adjoint().expect("adjoint empty");
-
-    //todo: consider how to make temporary adjoint data reset possible automatically from user
-    l0.reset_adjoint();
-    l1.reset_adjoint();
-    
-    adj.rev();
-    
-    let ret = l0.apply_rev_for_adjoint();
+    let mut gg = a.rev().get_mut(&l0).expect("l0 adjoint missing")
+        .rev().get_mut(&l0).expect("l0 adjoint missing").clone();
+   
+    let ret = gg.apply_rev();
     
     dbg!(&ret);
 
@@ -826,7 +827,7 @@ fn test_composite_rev_over_rev_change_input(){
     //change to (7x^2)''=(14x)'=14
     l1.set_val( ValType::F(7.) );
 
-    let ret2 = l0.apply_rev_for_adjoint();
+    let ret2 = gg.apply_rev();
     
     dbg!(&ret2);
 
@@ -842,14 +843,11 @@ fn test_composite_fwd_over_rev_change_input(){
     let mut l1 = Leaf( ValType::F(3.) );
     let mut a = Mul( Mul( l0.clone(), l0.clone()), l1.clone() );
 
-    a.rev();
-
-    let mut adj = l0.adjoint().expect("adjoint empty");
-
-    let mut g = adj.fwd();
+    let mut gg = a.rev().get_mut(&l0).expect("l0 adjoint missing")
+        .fwd();
     
-    let ret = g.apply_fwd();
-    
+    let ret = gg.apply_fwd();
+
     dbg!(&ret);
 
     assert!(eq_f32(ret.into(),6.));
@@ -857,7 +855,7 @@ fn test_composite_fwd_over_rev_change_input(){
     //change to (7x^2)''=(14x)'=14
     l1.set_val( ValType::F(7.) );
 
-    let ret2 = g.apply_fwd();
+    let ret2 = gg.apply_fwd();
     
     dbg!(&ret2);
 
@@ -890,4 +888,26 @@ fn test_composite_fwd_over_fwd_change_input(){
     dbg!(&ret2);
 
     assert!(eq_f32(ret2.into(),14.));
+}
+
+#[test]
+fn test_2nd_partial_derivative(){
+
+    //x=4
+    //y=3
+    //f=x^2 * y^2
+    //d^2(f)/(dx dy) = d(d(x^2 * y^2)/dx)/dy = d(2x*y^2)/dy = 2x*2y = 4*4*3 = 48
+    
+    let mut l0 = Leaf( ValType::F(4.) );
+    let mut l1 = Leaf( ValType::F(3.) );
+    let mut a = Mul( Mul( l0.clone(), l0.clone()), Mul( l1.clone(), l1.clone()) );
+
+    let mut gg = a.rev().get_mut(&l0).expect("l0 adjoint missing")
+        .rev().get_mut(&l1).expect("l1 adjoint missing").clone();
+   
+    let ret = gg.apply_rev();
+    
+    dbg!(&ret);
+
+    assert!(eq_f32(ret.into(),48.));
 }
