@@ -1,4 +1,4 @@
-#[derive(Debug,Clone,Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum ValType {
     F(f32),
     D(f64),
@@ -9,8 +9,8 @@ pub enum ValType {
 use std::fmt;
 
 impl fmt::Display for ValType {
-    fn fmt(&self, f: &mut fmt::Formatter ) -> fmt::Result {
-        write!( f, "{:?}", self )
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
     }
 }
 
