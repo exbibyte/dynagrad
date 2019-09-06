@@ -10,13 +10,8 @@ Work in progress..
 - a composition thereof for higher-order derivatives.
 
 # Todo:
-- Extend from scalar to vectors and matrices, possibly use ndarray or similar underneath.
+- Extend from scalar to multidimensional entities, with support for Ricci calculus
 - more ops and tests
 
 # Other:
 - currently depends on Rust nightly
-
-
-
-
-
