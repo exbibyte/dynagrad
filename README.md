@@ -11,7 +11,7 @@ Work in progress..
 
 # Todo:
 - Extend from scalar to multidimensional entities, with Ricci calculus for manipulating tensors and doing derivatives
-- more ops and tests
+- more ops and tests (see src/core.rs)
 
 # Other:
 - currently depends on Rust nightly
