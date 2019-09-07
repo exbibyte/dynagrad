@@ -1,5 +1,14 @@
-//! An implementation of ricci calculus use for
+//! An implementation of Ricci calculus use for
 //! tensor manipulations and computing derivatives
+//!
+//! use uppercase for tensor entity
+//! use lowercase for indices in superscript/subscript
+//! no indices indicates a scalar
+//! contraction happens for a matching superscript-subscript index
+//!
+//! valid expressions: A^ij_kl^mB^k_ij, A, A^i_j, A_ii, AB
+//! invalid expressions: ^A, _A, i, i^A, A^B_ij
+//!
 //! Work in progress..
 
 use std::collections::{HashMap, HashSet};
