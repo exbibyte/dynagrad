@@ -9,10 +9,12 @@ extern crate lazy_static;
 
 mod core;
 mod valtype;
+mod ricci;
 
 mod interface {
     pub use crate::core::{Add, Leaf, Mul};
     pub use crate::valtype::ValType;
+    pub use crate::ricci::*;
 }
 
 pub use interface::*;
