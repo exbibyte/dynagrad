@@ -257,6 +257,7 @@ extern crate gnuplot;
 
 use gnuplot::*;
 
+///require gnuplot installation
 fn plot() {
     
     //sin(x)' over [-2pi,2pi]
@@ -311,6 +312,7 @@ fn plot() {
     fg.show().unwrap();
 }
 
+///require gnuplot installation
 fn plot_2() {
     
     //tan(x)' over [-pi,pi]
@@ -398,6 +400,8 @@ fn main() {
     fwd_over_rev();
     rev_over_fwd();
     rev_rev_2nd_partial();
+    
+    //require gnuplot installation
     plot();
     plot_2();
 }
