@@ -252,6 +252,140 @@ fn rev_rev_2nd_partial() {
     assert!(eq_f32(ret.into(), 48.));
 }
 
+
+extern crate gnuplot;
+
+use gnuplot::*;
+
+fn plot() {
+    
+    //sin(x)' over [-2pi,2pi]
+    
+    let mut l0 = dg::Leaf(dg::ValType::F(0.));
+    let mut a = dg::Sin(l0.clone());
+    let mut dx = a.rev()
+        .get_mut(&l0)
+        .expect("l0 adjoint missing")
+        .clone();
+
+    let mut ddx = dx.rev()
+        .get_mut(&l0)
+        .expect("l0 adjoint missing").clone();
+
+    let pi = std::f32::consts::PI;
+    let count = 200;
+    let delta = 4.*pi/count as f32;
+
+    let mut xs = vec![];
+    let mut dys = vec![];
+    let mut ddys = vec![];
+    
+    for i in 0..count {
+        let x = -2.*pi+delta*i as f32;
+        l0.set_val(dg::ValType::F(x));
+        let dy : f32 = dx.apply_rev().into();
+        let ddy : f32 = ddx.apply_rev().into();
+        xs.push(x);
+        dys.push(dy);
+        ddys.push(ddy);
+    }
+
+    let mut fg = Figure::new();
+    fg.axes2d()
+	.set_title("Sin(x)", &[])
+	.set_legend(Graph(0.5), Graph(0.9), &[], &[])
+	.set_x_label("x", &[])
+	.set_y_label("y", &[])
+        .set_x_range(Fix(-2.*pi as f64),Fix(2.*pi as f64))
+	.lines(
+            xs.as_slice(),
+            dys.as_slice(),
+            &[Caption("f'")],
+	)
+	.lines(
+            xs.as_slice(),
+            ddys.as_slice(),
+            &[Caption("f''")],
+	);
+    
+    fg.show().unwrap();
+}
+
+fn plot_2() {
+    
+    //tan(x)' over [-pi,pi]
+    
+    let mut l0 = dg::Leaf(dg::ValType::F(0.));
+    let mut a = dg::Tan(l0.clone()).clone();
+    let mut dx = a.rev()
+        .get_mut(&l0)
+        .expect("l0 adjoint missing")
+        .clone();
+
+    let mut ddx = dx.rev()
+        .get_mut(&l0)
+        .expect("l0 adjoint missing").clone();
+    
+    let mut dddx = ddx.rev()
+        .get_mut(&l0)
+        .expect("l0 adjoint missing").clone();
+
+    let pi = std::f32::consts::PI;
+    let count = 200;
+    let delta = 2.*pi/count as f32;
+
+    let mut xs = vec![];
+    let mut ys = vec![];
+    let mut dys = vec![];
+    let mut ddys = vec![];
+    let mut dddys = vec![];
+    
+    for i in 0..count {
+        let x = -1.*pi+delta*i as f32;
+        l0.set_val(dg::ValType::F(x));
+        let y : f32 = a.apply_fwd().into();
+        let dy : f32 = dx.apply_rev().into();
+        let ddy : f32 = ddx.apply_rev().into();
+        let dddy : f32 = dddx.apply_rev().into();
+        xs.push(x);
+        ys.push(y);
+        dys.push(dy);
+        ddys.push(ddy);
+        dddys.push(dddy);
+    }
+
+    let mut fg = Figure::new();
+    fg.axes2d()
+	.set_title("Tan(x)", &[])
+	.set_legend(Graph(0.5), Graph(0.9), &[], &[])
+	.set_x_label("x", &[])
+	.set_y_label("y", &[])
+        .set_y_range(Fix(-30.),Fix(30.))
+        .set_x_range(Fix(-pi as _),Fix(pi as _))
+        .lines(
+            xs.as_slice(),
+            ys.as_slice(),
+            &[Caption("f")],
+	)
+	.lines(
+            xs.as_slice(),
+            dys.as_slice(),
+            &[Caption("f'")],
+	)
+	.lines(
+            xs.as_slice(),
+            ddys.as_slice(),
+            &[Caption("f''")],
+	)
+    	.lines(
+            xs.as_slice(),
+            dddys.as_slice(),
+            &[Caption("f'''")],
+	);
+    
+    fg.show().unwrap();
+}
+
 fn main() {
     fwd();
     fwd_looping();
@@ -264,4 +398,6 @@ fn main() {
     fwd_over_rev();
     rev_over_fwd();
     rev_rev_2nd_partial();
+    plot();
+    plot_2();
 }
