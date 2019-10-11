@@ -293,7 +293,7 @@ fn plot() {
 
     let mut fg = Figure::new();
     fg.axes2d()
-	.set_title("Sin(x)", &[])
+	.set_title("f=Sin(x)", &[])
 	.set_legend(Graph(0.5), Graph(0.9), &[], &[])
 	.set_x_label("x", &[])
 	.set_y_label("y", &[])
@@ -358,7 +358,7 @@ fn plot_2() {
 
     let mut fg = Figure::new();
     fg.axes2d()
-	.set_title("Tan(x)", &[])
+	.set_title("f=Tan(x)", &[])
 	.set_legend(Graph(0.5), Graph(0.9), &[], &[])
 	.set_x_label("x", &[])
 	.set_y_label("y", &[])

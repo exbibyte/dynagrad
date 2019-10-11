@@ -15,3 +15,9 @@ Work in progress..
 
 # Other:
 - currently depends on Rust nightly
+
+# Plots:
+<p align="center">
+   <img src="images/eg_simple_plot_tan.png" alt="drawing" width="400"/>
+   <img src="images/eg_simple_plot_sin.png" alt="drawing" width="400"/>
+</p>
