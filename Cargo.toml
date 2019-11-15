@@ -1,6 +1,6 @@
 [package]
 name = "dynagrad"
-version = "0.4.0"
+version = "0.4.1"
 authors = ["Yuan Liu <yuan6liu@gmail.com>"]
 edition = "2018"
 description = "Dynamic Auto-differentiation."

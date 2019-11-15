@@ -8,12 +8,12 @@ fn eq_f32(a: f32, b: f32) -> bool {
 }
 
 fn fwd() {
-    let mut l0 = dg::Leaf(dg::ValType::F(4.)).active();
-    let mut l1 = dg::Leaf(dg::ValType::F(3.));
+    let l0 = dg::Leaf(dg::ValType::F(4.)).active();
+    let l1 = dg::Leaf(dg::ValType::F(3.));
 
     //(3x)' = 3
 
-    let mut a = dg::Mul(l0.clone(), l1.clone());
+    let a = dg::Mul(l0.clone(), l1.clone());
 
     let mut b = a.fwd();
 
@@ -28,7 +28,7 @@ fn fwd_looping() {
     // (x*2^10) where {x=2} = 2^11
     // (x*2^10)' = 2^10
     // (x*2^10)'' = 0
-    let mut l0 = dg::Leaf(dg::ValType::F(2.)).active();
+    let l0 = dg::Leaf(dg::ValType::F(2.)).active();
 
     let mut l = l0.clone();
     for _ in 0..10 {
@@ -54,9 +54,9 @@ fn fwd_looping() {
 
 fn rev() {
     //(3x)' = 3
-    let mut l0 = dg::Leaf(dg::ValType::F(4.));
-    let mut l1 = dg::Leaf(dg::ValType::F(3.));
-    let mut a = dg::Mul(l0.clone(), l1.clone());
+    let l0 = dg::Leaf(dg::ValType::F(4.));
+    let l1 = dg::Leaf(dg::ValType::F(3.));
+    let a = dg::Mul(l0.clone(), l1.clone());
 
     let mut adjoints = a.rev();
 
@@ -74,9 +74,9 @@ fn fwd_over_fwd() {
     //y=3*x^2 where x=4
     //compute y'' = (6x)' = 6
 
-    let mut l0 = dg::Leaf(dg::ValType::F(4.)).active();
+    let l0 = dg::Leaf(dg::ValType::F(4.)).active();
     let mut l1 = dg::Leaf(dg::ValType::F(3.));
-    let mut a = dg::Mul(dg::Mul(l0.clone(), l0.clone()), l1.clone());
+    let a = dg::Mul(dg::Mul(l0.clone(), l0.clone()), l1.clone());
 
     let mut gg = a.fwd().fwd();
 
@@ -99,9 +99,9 @@ fn fwd_over_fwd() {
 fn rev_over_rev() {
     //(3x^2)'' = 6
 
-    let mut l0 = dg::Leaf(dg::ValType::F(4.));
+    let l0 = dg::Leaf(dg::ValType::F(4.));
     let mut l1 = dg::Leaf(dg::ValType::F(3.));
-    let mut a = dg::Mul(dg::Mul(l0.clone(), l0.clone()), l1.clone());
+    let a = dg::Mul(dg::Mul(l0.clone(), l0.clone()), l1.clone());
 
     let mut l0_adj = a.rev().get_mut(&l0).expect("l0 adjoint missing").clone();
 
@@ -133,11 +133,11 @@ fn rev_over_rev() {
 fn rev_over_rev_2() {
     //(3x^2)'' = 6
 
-    let mut l0 = dg::Leaf(dg::ValType::F(4.));
-    let mut l1 = dg::Leaf(dg::ValType::F(3.));
-    let mut a = dg::Mul(dg::Mul(l0.clone(), l0.clone()), l1.clone());
+    let l0 = dg::Leaf(dg::ValType::F(4.));
+    let l1 = dg::Leaf(dg::ValType::F(3.));
+    let a = dg::Mul(dg::Mul(l0.clone(), l0.clone()), l1.clone());
 
-    let mut ret = a
+    let ret = a
         .rev()
         .get_mut(&l0)
         .expect("l0 adjoint missing")
@@ -154,9 +154,9 @@ fn rev_over_rev_2() {
 fn rev_over_rev_3() {
     //(3x^2)'' = 6
 
-    let mut l0 = dg::Leaf(dg::ValType::F(4.));
+    let l0 = dg::Leaf(dg::ValType::F(4.));
     let mut l1 = dg::Leaf(dg::ValType::F(3.));
-    let mut a = dg::Mul(dg::Mul(l0.clone(), l0.clone()), l1.clone());
+    let a = dg::Mul(dg::Mul(l0.clone(), l0.clone()), l1.clone());
 
     let mut gg = a
         .rev()
@@ -188,9 +188,9 @@ fn fwd_over_rev() {
     //y=x*3 where x=4
     //compute y'' = (3)' = 0
 
-    let mut l0 = dg::Leaf(dg::ValType::F(4.)).active();
-    let mut l1 = dg::Leaf(dg::ValType::F(3.));
-    let mut a = dg::Mul(l0.clone(), l1.clone());
+    let l0 = dg::Leaf(dg::ValType::F(4.)).active();
+    let l1 = dg::Leaf(dg::ValType::F(3.));
+    let a = dg::Mul(l0.clone(), l1.clone());
 
     let ret = a
         .rev()
@@ -207,9 +207,9 @@ fn fwd_over_rev() {
 fn rev_over_fwd() {
     //(3x^2)'' = 6
 
-    let mut l0 = dg::Leaf(dg::ValType::F(4.)).active();
-    let mut l1 = dg::Leaf(dg::ValType::F(3.));
-    let mut a = dg::Mul(dg::Mul(l0.clone(), l0.clone()), l1.clone());
+    let l0 = dg::Leaf(dg::ValType::F(4.)).active();
+    let l1 = dg::Leaf(dg::ValType::F(3.));
+    let a = dg::Mul(dg::Mul(l0.clone(), l0.clone()), l1.clone());
 
     let ret = a
         .fwd()
@@ -229,9 +229,9 @@ fn rev_rev_2nd_partial() {
     //f = x^2 * y^2
     //d^2/dxdy (f) = d(d(x^2 * y^2)/dx)/dy = d(2x*y^2)/dy = 2x*2y = 4*x*y = 48
 
-    let mut l0 = dg::Leaf(dg::ValType::F(4.));
-    let mut l1 = dg::Leaf(dg::ValType::F(3.));
-    let mut a = dg::Mul(
+    let l0 = dg::Leaf(dg::ValType::F(4.));
+    let l1 = dg::Leaf(dg::ValType::F(3.));
+    let a = dg::Mul(
         dg::Mul(l0.clone(), l0.clone()),
         dg::Mul(l1.clone(), l1.clone()),
     );
@@ -263,7 +263,7 @@ fn plot() {
     //sin(x)' over [-2pi,2pi]
     
     let mut l0 = dg::Leaf(dg::ValType::F(0.));
-    let mut a = dg::Sin(l0.clone());
+    let a = dg::Sin(l0.clone());
     let mut dx = a.rev()
         .get_mut(&l0)
         .expect("l0 adjoint missing")

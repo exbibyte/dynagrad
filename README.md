@@ -4,6 +4,9 @@ A pedagogical attempt at auto-differentiation. This is based on the autograd pac
 
 Work in progress..
 
+# Note:
+- currently depends on Rust nightly
+
 # Support:
 - forward mode
 - reverse mode
@@ -12,9 +15,6 @@ Work in progress..
 # Todo:
 - Extend from scalar to multidimensional entities, with Ricci calculus for manipulating tensors and doing derivatives
 - more ops and tests (see src/core.rs)
-
-# Other:
-- currently depends on Rust nightly
 
 # Plots:
 <p align="center">

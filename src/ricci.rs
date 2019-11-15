@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! An implementation of Ricci calculus use for
 //! tensor manipulations and computing derivatives
 //!
@@ -227,7 +228,7 @@ impl TryFrom<&str> for Expr {
 }
 
 pub fn ricci(expr: &str) {
-    let expr = Expr::try_from(expr).unwrap();
+    let _expr = Expr::try_from(expr).unwrap();
 }
 
 #[test]

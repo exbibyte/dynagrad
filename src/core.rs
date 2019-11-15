@@ -1,19 +1,17 @@
 //! An implementation of dynamic automatic differentiation
 //! with forward and reverse modes
+
 #![allow(non_snake_case)]
 
-use std::borrow::{Borrow, BorrowMut};
+// use std::borrow::{Borrow, BorrowMut};
 use std::cell::RefCell;
 use std::cmp::{Eq, PartialEq};
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
-use std::mem;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
+#[cfg(test)]
+use std::sync::{atomic, Arc};
 
 #[derive(Clone, Debug)]
 pub struct PtrVWrap(pub Rc<RefCell<VWrap>>);
@@ -38,12 +36,12 @@ use crate::valtype::ValType;
 
 #[cfg(test)]
 lazy_static! {
-    static ref ID: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
+    static ref ID: Arc<atomic::AtomicUsize> = Arc::new(atomic::AtomicUsize::new(0));
 }
 
 #[cfg(test)]
 fn get_id() -> i32 {
-    ID.fetch_add(1, Ordering::SeqCst) as _
+    ID.fetch_add(1, atomic::Ordering::SeqCst) as _
 }
 
 /// wrapper for variable with recording of dependencies
@@ -198,7 +196,7 @@ impl PtrVWrap {
 
         //breadth-first
         while !q.is_empty() {
-            let mut n = q.pop_front().unwrap();
+            let n = q.pop_front().unwrap();
 
             if visited.contains(&n) {
                 //skip already traversed nodes
@@ -210,7 +208,7 @@ impl PtrVWrap {
             }
 
             //delegate adjoint calc to operation
-            let mut adjoints = {
+            let adjoints = {
                 let mut f = n.0.deref().borrow().raw.adjoint();
                 f(
                     n.0.deref().borrow().inp.clone(),
@@ -406,7 +404,7 @@ impl FWrap for OpMul {
     }
     fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, PtrVWrap, &PtrVWrap) -> Vec<PtrVWrap>> {
         Box::new(
-            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, cur: &PtrVWrap| {
+            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, _cur: &PtrVWrap| {
                 assert_eq!(inputs.len(), 2);
                 vec![
                     Mul(inputs[1].clone(), out_adj.clone()),
@@ -466,7 +464,7 @@ impl FWrap for OpAdd {
     }
     fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, PtrVWrap, &PtrVWrap) -> Vec<PtrVWrap>> {
         Box::new(
-            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, cur: &PtrVWrap| {
+            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, _cur: &PtrVWrap| {
                 assert_eq!(inputs.len(), 2);
                 vec![out_adj.clone(), out_adj]
             },
@@ -491,7 +489,7 @@ impl FWrap for OpLeaf {
     }
     fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, PtrVWrap, &PtrVWrap) -> Vec<PtrVWrap>> {
         Box::new(
-            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, cur: &PtrVWrap| {
+            move |inputs: Vec<PtrVWrap>, _out_adj: PtrVWrap, _cur: &PtrVWrap| {
                 assert_eq!(inputs.len(), 0);
                 vec![]
             },
@@ -519,13 +517,13 @@ impl FWrap for OpLink {
         })
     }
     fn tangent(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, &PtrVWrap) -> PtrVWrap> {
-        Box::new(move |_args: Vec<PtrVWrap>, self_ptr: &PtrVWrap| {
+        Box::new(move |_args: Vec<PtrVWrap>, _self_ptr: &PtrVWrap| {
             VWrap::new_with_val(OpZero::new(), ValType::F(0.))
         })
     }
     fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, PtrVWrap, &PtrVWrap) -> Vec<PtrVWrap>> {
         Box::new(
-            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, cur: &PtrVWrap| {
+            move |inputs: Vec<PtrVWrap>, _out_adj: PtrVWrap, _cur: &PtrVWrap| {
                 vec![VWrap::new_with_val(OpZero::new(), ValType::F(0.)); inputs.len()]
             },
         )
@@ -543,13 +541,13 @@ impl FWrap for OpConst {
         Box::new(move |_x: Vec<(ValType, bool)>, v: Option<ValType>| v.expect("leaf value missing"))
     }
     fn tangent(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, &PtrVWrap) -> PtrVWrap> {
-        Box::new(move |_args: Vec<PtrVWrap>, self_ptr: &PtrVWrap| {
+        Box::new(move |_args: Vec<PtrVWrap>, _self_ptr: &PtrVWrap| {
             VWrap::new_with_val(OpZero::new(), ValType::F(0.))
         })
     }
     fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, PtrVWrap, &PtrVWrap) -> Vec<PtrVWrap>> {
         Box::new(
-            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, cur: &PtrVWrap| {
+            move |inputs: Vec<PtrVWrap>, _out_adj: PtrVWrap, _cur: &PtrVWrap| {
                 assert_eq!(inputs.len(), 0);
                 vec![]
             },
@@ -568,13 +566,13 @@ impl FWrap for OpOne {
         Box::new(move |_x: Vec<(ValType, bool)>, _v: Option<ValType>| ValType::F(1.))
     }
     fn tangent(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, &PtrVWrap) -> PtrVWrap> {
-        Box::new(move |_args: Vec<PtrVWrap>, self_ptr: &PtrVWrap| {
+        Box::new(move |_args: Vec<PtrVWrap>, _self_ptr: &PtrVWrap| {
             VWrap::new_with_val(OpZero::new(), ValType::F(0.))
         })
     }
     fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, PtrVWrap, &PtrVWrap) -> Vec<PtrVWrap>> {
         Box::new(
-            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, cur: &PtrVWrap| {
+            move |inputs: Vec<PtrVWrap>, _out_adj: PtrVWrap, _cur: &PtrVWrap| {
                 assert_eq!(inputs.len(), 0);
                 vec![]
             },
@@ -596,13 +594,13 @@ impl FWrap for OpZero {
         })
     }
     fn tangent(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, &PtrVWrap) -> PtrVWrap> {
-        Box::new(move |_args: Vec<PtrVWrap>, self_ptr: &PtrVWrap| {
+        Box::new(move |_args: Vec<PtrVWrap>, _self_ptr: &PtrVWrap| {
             VWrap::new_with_val(OpZero::new(), ValType::F(0.))
         })
     }
     fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, PtrVWrap, &PtrVWrap) -> Vec<PtrVWrap>> {
         Box::new(
-            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, cur: &PtrVWrap| {
+            move |inputs: Vec<PtrVWrap>, _out_adj: PtrVWrap, _cur: &PtrVWrap| {
                 assert_eq!(inputs.len(), 0);
                 vec![]
             },
@@ -629,14 +627,14 @@ impl FWrap for OpSin {
         })
     }
     fn tangent(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, &PtrVWrap) -> PtrVWrap> {
-        Box::new(move |args: Vec<PtrVWrap>, self_ptr: &PtrVWrap| {
+        Box::new(move |args: Vec<PtrVWrap>, _self_ptr: &PtrVWrap| {
             assert_eq!(args.len(), 1);
             VWrap::new_with_input(OpCos::new(), vec![args[0].clone()])
         })
     }
     fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, PtrVWrap, &PtrVWrap) -> Vec<PtrVWrap>> {
         Box::new(
-            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, cur: &PtrVWrap| {
+            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, _cur: &PtrVWrap| {
                 assert_eq!(inputs.len(), 1);
                 let a = VWrap::new_with_input(OpCos::new(), vec![inputs[0].clone()]);
                 vec![Mul(a, out_adj.clone())]
@@ -664,7 +662,7 @@ impl FWrap for OpCos {
         })
     }
     fn tangent(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, &PtrVWrap) -> PtrVWrap> {
-        Box::new(move |args: Vec<PtrVWrap>, self_ptr: &PtrVWrap| {
+        Box::new(move |args: Vec<PtrVWrap>, _self_ptr: &PtrVWrap| {
             assert_eq!(args.len(), 1);
             Mul(
                 VWrap::new_with_val(OpConst::new(), ValType::F(-1.)),
@@ -674,7 +672,7 @@ impl FWrap for OpCos {
     }
     fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, PtrVWrap, &PtrVWrap) -> Vec<PtrVWrap>> {
         Box::new(
-            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, cur: &PtrVWrap| {
+            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, _cur: &PtrVWrap| {
                 assert_eq!(inputs.len(), 1);
                 let a = Mul(
                     VWrap::new_with_val(OpConst::new(), ValType::F(-1.)),
@@ -705,7 +703,7 @@ impl FWrap for OpTan {
         })
     }
     fn tangent(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, &PtrVWrap) -> PtrVWrap> {
-        Box::new(move |args: Vec<PtrVWrap>, self_ptr: &PtrVWrap| {
+        Box::new(move |args: Vec<PtrVWrap>, _self_ptr: &PtrVWrap| {
             //y'=1/(cos(x))^2
             assert_eq!(args.len(), 1);
             let one = VWrap::new_with_val(OpConst::new(), ValType::F(1.));
@@ -717,7 +715,7 @@ impl FWrap for OpTan {
     }
     fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, PtrVWrap, &PtrVWrap) -> Vec<PtrVWrap>> {
         Box::new(
-            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, cur: &PtrVWrap| {
+            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, _cur: &PtrVWrap| {
                 assert_eq!(inputs.len(), 1);
 
                 let one = VWrap::new_with_val(OpConst::new(), ValType::F(1.));
@@ -749,7 +747,7 @@ impl FWrap for OpPow {
         })
     }
     fn tangent(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, &PtrVWrap) -> PtrVWrap> {
-        Box::new(move |args: Vec<PtrVWrap>, self_ptr: &PtrVWrap| {
+        Box::new(move |args: Vec<PtrVWrap>, _self_ptr: &PtrVWrap| {
             //y = x^a = exp(ln(x^a)) = exp(a ln(x))
             //y' = exp(a ln(x))( a'*ln(x) + a/x*x') = x^a *(a'*ln(x)+a/x*x')
 
@@ -766,7 +764,7 @@ impl FWrap for OpPow {
     }
     fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, PtrVWrap, &PtrVWrap) -> Vec<PtrVWrap>> {
         Box::new(
-            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, cur: &PtrVWrap| {
+            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, _cur: &PtrVWrap| {
                 //y = x^a = exp(ln(x^a)) = exp(a ln(x))
                 //y' = exp(a ln(x))( a'*ln(x) + a/x*x')
                 //   = x^(a-1)*a*x' + x^a*ln(x) a'
@@ -811,7 +809,7 @@ impl FWrap for OpExp {
         })
     }
     fn tangent(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, &PtrVWrap) -> PtrVWrap> {
-        Box::new(move |args: Vec<PtrVWrap>, self_ptr: &PtrVWrap| {
+        Box::new(move |args: Vec<PtrVWrap>, _self_ptr: &PtrVWrap| {
             //y=exp(x)
             //y'=exp(x)*x'
 
@@ -822,7 +820,7 @@ impl FWrap for OpExp {
     }
     fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, PtrVWrap, &PtrVWrap) -> Vec<PtrVWrap>> {
         Box::new(
-            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, cur: &PtrVWrap| {
+            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, _cur: &PtrVWrap| {
                 assert_eq!(inputs.len(), 1);
 
                 vec![Mul(Exp(inputs[0].clone()), out_adj.clone())]
@@ -846,7 +844,7 @@ impl FWrap for OpLn {
         })
     }
     fn tangent(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, &PtrVWrap) -> PtrVWrap> {
-        Box::new(move |args: Vec<PtrVWrap>, self_ptr: &PtrVWrap| {
+        Box::new(move |args: Vec<PtrVWrap>, _self_ptr: &PtrVWrap| {
             //y=ln(x)
             //y'= 1/x *x'
 
@@ -859,7 +857,7 @@ impl FWrap for OpLn {
     }
     fn adjoint(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, PtrVWrap, &PtrVWrap) -> Vec<PtrVWrap>> {
         Box::new(
-            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, cur: &PtrVWrap| {
+            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, _cur: &PtrVWrap| {
                 assert_eq!(inputs.len(), 1);
 
                 let one = VWrap::new_with_val(OpConst::new(), ValType::F(1.));
@@ -886,7 +884,7 @@ impl FWrap for OpDiv {
         })
     }
     fn tangent(&self) -> Box<dyn FnMut(Vec<PtrVWrap>, &PtrVWrap) -> PtrVWrap> {
-        Box::new(move |args: Vec<PtrVWrap>, self_ptr: &PtrVWrap| {
+        Box::new(move |args: Vec<PtrVWrap>, _self_ptr: &PtrVWrap| {
             //y=a/b
             //y'= (a'b-ab')/(b*b)
 
@@ -905,7 +903,7 @@ impl FWrap for OpDiv {
         Box::new(
             //y=a/b
             //y'= (a'b-ab')/(b*b) = a'/b - ab'/(b*b)
-            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, cur: &PtrVWrap| {
+            move |inputs: Vec<PtrVWrap>, out_adj: PtrVWrap, _cur: &PtrVWrap| {
                 assert_eq!(inputs.len(), 2);
 
                 let one = VWrap::new_with_val(OpConst::new(), ValType::F(1.));
@@ -1010,7 +1008,7 @@ fn eq_f32(a: f32, b: f32) -> bool {
 
 #[test]
 fn test_loop_fwd() {
-    let mut l0 = Leaf(ValType::F(2.)).active();
+    let l0 = Leaf(ValType::F(2.)).active();
 
     let mut l = l0.clone();
     for _ in 0..10 {
@@ -1035,9 +1033,9 @@ fn test_loop_fwd() {
 fn test_simple_fwd() {
     //(3x)' = 3
 
-    let mut l0 = Leaf(ValType::F(4.)).active();
-    let mut l1 = Leaf(ValType::F(3.));
-    let mut a = Mul(l0.clone(), l1.clone());
+    let l0 = Leaf(ValType::F(4.)).active();
+    let l1 = Leaf(ValType::F(3.));
+    let a = Mul(l0.clone(), l1.clone());
 
     let mut b = a.fwd();
 
@@ -1051,9 +1049,9 @@ fn test_simple_fwd() {
 #[test]
 fn test_square_fwd() {
     //(3x^2)' = 6x{x=4} = 24
-    let mut l0 = Leaf(ValType::F(4.)).active();
-    let mut l1 = Leaf(ValType::F(3.));
-    let mut a = Mul(Mul(l0.clone(), l0.clone()), l1);
+    let l0 = Leaf(ValType::F(4.)).active();
+    let l1 = Leaf(ValType::F(3.));
+    let a = Mul(Mul(l0.clone(), l0.clone()), l1);
 
     let mut b = a.fwd();
 
@@ -1069,9 +1067,9 @@ fn test_square_fwd() {
 #[test]
 fn test_square_fwd_2() {
     //(x(4)^2)' = 16
-    let mut l0 = Leaf(ValType::F(4.));
-    let mut l1 = Leaf(ValType::F(3.)).active();
-    let mut a = Mul(Mul(l0.clone(), l0.clone()), l1);
+    let l0 = Leaf(ValType::F(4.));
+    let l1 = Leaf(ValType::F(3.)).active();
+    let a = Mul(Mul(l0.clone(), l0.clone()), l1);
 
     let mut b = a.fwd();
 
@@ -1085,9 +1083,9 @@ fn test_square_fwd_2() {
 #[test]
 fn test_simple_rev() {
     //(3x)' = 3
-    let mut l0 = Leaf(ValType::F(4.));
-    let mut l1 = Leaf(ValType::F(3.));
-    let mut a = Mul(l0.clone(), l1.clone());
+    let l0 = Leaf(ValType::F(4.));
+    let l1 = Leaf(ValType::F(3.));
+    let a = Mul(l0.clone(), l1.clone());
 
     let ret = a
         .rev()
@@ -1103,9 +1101,9 @@ fn test_simple_rev() {
 #[test]
 fn test_simple_rev_2() {
     //(3x^2)' = 6x{x=4} = 24
-    let mut l0 = Leaf(ValType::F(4.));
-    let mut l1 = Leaf(ValType::F(3.));
-    let mut a = Mul(Mul(l0.clone(), l0.clone()), l1.clone());
+    let l0 = Leaf(ValType::F(4.));
+    let l1 = Leaf(ValType::F(3.));
+    let a = Mul(Mul(l0.clone(), l0.clone()), l1.clone());
 
     let ret = a
         .rev()
@@ -1123,9 +1121,9 @@ fn test_composite_fwd_over_fwd() {
     //y=3*x^2 where x=4
     //compute y'' = (6x)' = 6
 
-    let mut l0 = Leaf(ValType::F(4.)).active();
-    let mut l1 = Leaf(ValType::F(3.));
-    let mut a = Mul(Mul(l0.clone(), l0.clone()), l1.clone());
+    let l0 = Leaf(ValType::F(4.)).active();
+    let l1 = Leaf(ValType::F(3.));
+    let a = Mul(Mul(l0.clone(), l0.clone()), l1.clone());
 
     let mut gg = a.fwd().fwd();
 
@@ -1141,13 +1139,13 @@ fn test_composite_fwd_over_rev() {
     //y=x*3 where x=4
     //compute y'' = (3)' = 0
 
-    let mut l0 = Leaf(ValType::F(4.)).active();
-    let mut l1 = Leaf(ValType::F(3.));
-    let mut a = Mul(l0.clone(), l1.clone());
+    let l0 = Leaf(ValType::F(4.)).active();
+    let l1 = Leaf(ValType::F(3.));
+    let a = Mul(l0.clone(), l1.clone());
 
     let mut adjoints = a.rev();
 
-    let mut adj = adjoints.get_mut(&l0).expect("l0 adjoint missing");
+    let adj = adjoints.get_mut(&l0).expect("l0 adjoint missing");
 
     let mut g = adj.fwd();
 
@@ -1163,9 +1161,9 @@ fn test_composite_fwd_over_rev_2() {
     //y=3*x^2 where x=4
     //compute y'' = (6x)' = 6
 
-    let mut l0 = Leaf(ValType::F(4.)).active();
-    let mut l1 = Leaf(ValType::F(3.));
-    let mut a = Mul(Mul(l0.clone(), l0.clone()), l1.clone());
+    let l0 = Leaf(ValType::F(4.)).active();
+    let l1 = Leaf(ValType::F(3.));
+    let a = Mul(Mul(l0.clone(), l0.clone()), l1.clone());
 
     let ret = a
         .rev()
@@ -1182,9 +1180,9 @@ fn test_composite_fwd_over_rev_2() {
 #[test]
 fn test_composite_rev_over_rev() {
     //(3x^2)'' = 6
-    let mut l0 = Leaf(ValType::F(4.));
-    let mut l1 = Leaf(ValType::F(3.));
-    let mut a = Mul(Mul(l0.clone(), l0.clone()), l1.clone());
+    let l0 = Leaf(ValType::F(4.));
+    let l1 = Leaf(ValType::F(3.));
+    let a = Mul(Mul(l0.clone(), l0.clone()), l1.clone());
 
     let ret = a
         .rev()
@@ -1204,9 +1202,9 @@ fn test_composite_rev_over_rev() {
 fn test_composite_rev_over_fwd() {
     //(3x^2)'' = 6
 
-    let mut l0 = Leaf(ValType::F(4.)).active();
-    let mut l1 = Leaf(ValType::F(3.));
-    let mut a = Mul(Mul(l0.clone(), l0.clone()), l1.clone());
+    let l0 = Leaf(ValType::F(4.)).active();
+    let l1 = Leaf(ValType::F(3.));
+    let a = Mul(Mul(l0.clone(), l0.clone()), l1.clone());
 
     let ret = a
         .fwd()
@@ -1224,9 +1222,9 @@ fn test_composite_rev_over_fwd() {
 fn test_composite_rev_over_fwd_change_input() {
     //(3x^2)'' = 6
 
-    let mut l0 = Leaf(ValType::F(4.)).active();
+    let l0 = Leaf(ValType::F(4.)).active();
     let mut l1 = Leaf(ValType::F(3.));
-    let mut a = Mul(Mul(l0.clone(), l0.clone()), l1.clone());
+    let a = Mul(Mul(l0.clone(), l0.clone()), l1.clone());
 
     let mut gg = a
         .fwd()
@@ -1255,9 +1253,9 @@ fn test_composite_rev_over_fwd_change_input() {
 fn test_composite_rev_over_rev_change_input() {
     //(3x^2)'' = 6
 
-    let mut l0 = Leaf(ValType::F(4.));
+    let l0 = Leaf(ValType::F(4.));
     let mut l1 = Leaf(ValType::F(3.));
-    let mut a = Mul(Mul(l0.clone(), l0.clone()), l1.clone());
+    let a = Mul(Mul(l0.clone(), l0.clone()), l1.clone());
 
     let mut gg = a
         .rev()
@@ -1288,9 +1286,9 @@ fn test_composite_rev_over_rev_change_input() {
 fn test_composite_fwd_over_rev_change_input() {
     //(3x^2)'' = 6
 
-    let mut l0 = Leaf(ValType::F(4.)).active();
+    let l0 = Leaf(ValType::F(4.)).active();
     let mut l1 = Leaf(ValType::F(3.));
-    let mut a = Mul(Mul(l0.clone(), l0.clone()), l1.clone());
+    let a = Mul(Mul(l0.clone(), l0.clone()), l1.clone());
 
     let mut gg = a.rev().get_mut(&l0).expect("l0 adjoint missing").fwd();
 
@@ -1315,9 +1313,9 @@ fn test_composite_fwd_over_fwd_change_input() {
     //y=3*x^2 where x=4
     //compute y'' = (6x)' = 6
 
-    let mut l0 = Leaf(ValType::F(4.)).active();
+    let l0 = Leaf(ValType::F(4.)).active();
     let mut l1 = Leaf(ValType::F(3.));
-    let mut a = Mul(Mul(l0.clone(), l0.clone()), l1.clone());
+    let a = Mul(Mul(l0.clone(), l0.clone()), l1.clone());
 
     let mut gg = a.fwd().fwd();
 
@@ -1344,9 +1342,9 @@ fn test_2nd_partial_derivative() {
     //f=x^2 * y^2
     //d^2(f)/(dx dy) = d(d(x^2 * y^2)/dx)/dy = d(2x*y^2)/dy = 2x*2y = 4*4*3 = 48
 
-    let mut l0 = Leaf(ValType::F(4.));
-    let mut l1 = Leaf(ValType::F(3.));
-    let mut a = Mul(Mul(l0.clone(), l0.clone()), Mul(l1.clone(), l1.clone()));
+    let l0 = Leaf(ValType::F(4.));
+    let l1 = Leaf(ValType::F(3.));
+    let a = Mul(Mul(l0.clone(), l0.clone()), Mul(l1.clone(), l1.clone()));
 
     let mut gg = a
         .rev()
@@ -1370,8 +1368,8 @@ fn test_trig_sin_fwd() {
     //y'=3*cos(x) where x=2
     //y''=-3*sin(x) where x=2
 
-    let mut l0 = Leaf(ValType::F(2.)).active();
-    let mut l1 = Leaf(ValType::F(3.));
+    let l0 = Leaf(ValType::F(2.)).active();
+    let l1 = Leaf(ValType::F(3.));
     let mut a = Mul(Sin(l0.clone()), l1.clone());
 
     assert!(eq_f32(a.apply_fwd().into(), 3.0 * 2f32.sin()));
@@ -1391,9 +1389,9 @@ fn test_trig_sin_rev() {
     //y'=3*cos(x) where x=2
     //y''=-3*sin(x) where x=2
 
-    let mut l0 = Leaf(ValType::F(2.)).active();
-    let mut l1 = Leaf(ValType::F(3.));
-    let mut a = Mul(Sin(l0.clone()), l1.clone());
+    let l0 = Leaf(ValType::F(2.)).active();
+    let l1 = Leaf(ValType::F(3.));
+    let a = Mul(Sin(l0.clone()), l1.clone());
 
     {
         let g = a
@@ -1425,8 +1423,8 @@ fn test_trig_cos_fwd() {
     //y'=-3*sin(x) where x=2
     //y''=-3*cos(x) where x=2
 
-    let mut l0 = Leaf(ValType::F(2.)).active();
-    let mut l1 = Leaf(ValType::F(3.));
+    let l0 = Leaf(ValType::F(2.)).active();
+    let l1 = Leaf(ValType::F(3.));
     let mut a = Mul(Cos(l0.clone()), l1.clone());
 
     assert!(eq_f32(a.apply_fwd().into(), 3.0 * 2f32.cos()));
@@ -1446,9 +1444,9 @@ fn test_trig_cos_rev() {
     //y'=-3*sin(x) where x=2
     //y''=-3*cos(x) where x=2
 
-    let mut l0 = Leaf(ValType::F(2.)).active();
-    let mut l1 = Leaf(ValType::F(3.));
-    let mut a = Mul(Cos(l0.clone()), l1.clone());
+    let l0 = Leaf(ValType::F(2.)).active();
+    let l1 = Leaf(ValType::F(3.));
+    let a = Mul(Cos(l0.clone()), l1.clone());
 
     {
         let g = a
@@ -1480,10 +1478,10 @@ fn test_exp_fwd() {
     //y'=12*exp(4x) where x=2
     //y''=48*exp(4x) where x=2
 
-    let mut l0 = Leaf(ValType::F(2.)).active();
-    let mut l1 = Leaf(ValType::F(3.));
-    let mut l2 = Leaf(ValType::F(4.));
-    let mut a = Mul(Exp(Mul(l2.clone(), l0.clone())), l1.clone());
+    let l0 = Leaf(ValType::F(2.)).active();
+    let l1 = Leaf(ValType::F(3.));
+    let l2 = Leaf(ValType::F(4.));
+    let a = Mul(Exp(Mul(l2.clone(), l0.clone())), l1.clone());
 
     {
         assert!(eq_f32(a.fwd().apply_fwd().into(), 12. * 8f32.exp()));
@@ -1499,10 +1497,10 @@ fn test_exp_rev() {
     //y'=12*exp(4x) where x=2
     //y''=48*exp(4x) where x=2
 
-    let mut l0 = Leaf(ValType::F(2.)).active();
-    let mut l1 = Leaf(ValType::F(3.));
-    let mut l2 = Leaf(ValType::F(4.));
-    let mut a = Mul(Exp(Mul(l2.clone(), l0.clone())), l1.clone());
+    let l0 = Leaf(ValType::F(2.)).active();
+    let l1 = Leaf(ValType::F(3.));
+    let l2 = Leaf(ValType::F(4.));
+    let a = Mul(Exp(Mul(l2.clone(), l0.clone())), l1.clone());
 
     {
         let g = a
@@ -1531,10 +1529,10 @@ fn test_div_fwd() {
     //y'=-3/4*x^-2
     //y''=6/4*x^-3
 
-    let mut l0 = Leaf(ValType::F(2.)).active();
-    let mut l1 = Leaf(ValType::F(3.));
-    let mut l2 = Leaf(ValType::F(4.));
-    let mut a = Div(l1.clone(), Mul(l2.clone(), l0.clone()));
+    let l0 = Leaf(ValType::F(2.)).active();
+    let l1 = Leaf(ValType::F(3.));
+    let l2 = Leaf(ValType::F(4.));
+    let a = Div(l1.clone(), Mul(l2.clone(), l0.clone()));
 
     {
         assert!(eq_f32(a.fwd().apply_fwd().into(), -3. / 4. * 2f32.powi(-2)));
@@ -1553,10 +1551,10 @@ fn test_div_rev() {
     //y'=-3/4*x^-2
     //y''=6/4*x^-3
 
-    let mut l0 = Leaf(ValType::F(2.)).active();
-    let mut l1 = Leaf(ValType::F(3.));
-    let mut l2 = Leaf(ValType::F(4.));
-    let mut a = Div(l1.clone(), Mul(l2.clone(), l0.clone()));
+    let l0 = Leaf(ValType::F(2.)).active();
+    let l1 = Leaf(ValType::F(3.));
+    let l2 = Leaf(ValType::F(4.));
+    let a = Div(l1.clone(), Mul(l2.clone(), l0.clone()));
 
     {
         let g = a
@@ -1587,10 +1585,10 @@ fn test_tan_fwd() {
     //y=3tan(4x) where x=2
     //y'=12/(cos(4x))^2 where x=2
 
-    let mut l0 = Leaf(ValType::F(2.)).active();
-    let mut l1 = Leaf(ValType::F(3.));
-    let mut l2 = Leaf(ValType::F(4.));
-    let mut a = Mul(l1.clone(), Tan(Mul(l2.clone(), l0.clone())));
+    let l0 = Leaf(ValType::F(2.)).active();
+    let l1 = Leaf(ValType::F(3.));
+    let l2 = Leaf(ValType::F(4.));
+    let a = Mul(l1.clone(), Tan(Mul(l2.clone(), l0.clone())));
 
     assert!(eq_f32(
         a.fwd().apply_fwd().into(),
@@ -1603,10 +1601,10 @@ fn test_tan_rev() {
     //y=3tan(4x) where x=2
     //y'=12/(cos(4x))^2 where x=2
 
-    let mut l0 = Leaf(ValType::F(2.)).active();
-    let mut l1 = Leaf(ValType::F(3.));
-    let mut l2 = Leaf(ValType::F(4.));
-    let mut a = Mul(l1.clone(), Tan(Mul(l2.clone(), l0.clone())));
+    let l0 = Leaf(ValType::F(2.)).active();
+    let l1 = Leaf(ValType::F(3.));
+    let l2 = Leaf(ValType::F(4.));
+    let a = Mul(l1.clone(), Tan(Mul(l2.clone(), l0.clone())));
 
     let g = a
         .rev()
@@ -1622,9 +1620,9 @@ fn test_ln_fwd() {
     //y=ln(4x) where x=2
     //y'=4/(4x) where x=2
 
-    let mut l0 = Leaf(ValType::F(2.)).active();
-    let mut l1 = Leaf(ValType::F(4.));
-    let mut a = Ln(Mul(l0.clone(), l1.clone()));
+    let l0 = Leaf(ValType::F(2.)).active();
+    let l1 = Leaf(ValType::F(4.));
+    let a = Ln(Mul(l0.clone(), l1.clone()));
 
     let g = a.fwd().apply_fwd();
 
@@ -1636,9 +1634,9 @@ fn test_ln_rev() {
     //y=ln(4x) where x=2
     //y'=4/(4x) where x=2
 
-    let mut l0 = Leaf(ValType::F(2.)).active();
-    let mut l1 = Leaf(ValType::F(4.));
-    let mut a = Ln(Mul(l0.clone(), l1.clone()));
+    let l0 = Leaf(ValType::F(2.)).active();
+    let l1 = Leaf(ValType::F(4.));
+    let a = Ln(Mul(l0.clone(), l1.clone()));
 
     let g = a
         .rev()
@@ -1654,10 +1652,10 @@ fn test_pow_fwd() {
     //y=4x^3 where x=2
     //y'=12*x^2 where x=2
 
-    let mut l0 = Leaf(ValType::F(2.)).active();
-    let mut l1 = Leaf(ValType::F(4.));
-    let mut l2 = Leaf(ValType::F(3.));
-    let mut a = Mul(l1.clone(), Pow(l0.clone(), l2.clone()));
+    let l0 = Leaf(ValType::F(2.)).active();
+    let l1 = Leaf(ValType::F(4.));
+    let l2 = Leaf(ValType::F(3.));
+    let a = Mul(l1.clone(), Pow(l0.clone(), l2.clone()));
 
     assert!(eq_f32(a.fwd().apply_fwd().into(), 12. * 4.));
 }
@@ -1667,10 +1665,10 @@ fn test_pow_fwd_2() {
     //y=4^(3x) where x=2
     //y'=ln(4)*4^(3x)*3 where x=2
 
-    let mut l0 = Leaf(ValType::F(2.)).active();
-    let mut l1 = Leaf(ValType::F(4.));
-    let mut l2 = Leaf(ValType::F(3.));
-    let mut a = Pow(l1.clone(), Mul(l2.clone(), l0.clone()));
+    let l0 = Leaf(ValType::F(2.)).active();
+    let l1 = Leaf(ValType::F(4.));
+    let l2 = Leaf(ValType::F(3.));
+    let a = Pow(l1.clone(), Mul(l2.clone(), l0.clone()));
 
     assert!(eq_f32(
         a.fwd().apply_fwd().into(),
@@ -1683,10 +1681,10 @@ fn test_pow_rev() {
     //y=4x^3 where x=2
     //y'=12*x^2 where x=2
 
-    let mut l0 = Leaf(ValType::F(2.)).active();
-    let mut l1 = Leaf(ValType::F(4.));
-    let mut l2 = Leaf(ValType::F(3.));
-    let mut a = Mul(l1.clone(), Pow(l0.clone(), l2.clone()));
+    let l0 = Leaf(ValType::F(2.)).active();
+    let l1 = Leaf(ValType::F(4.));
+    let l2 = Leaf(ValType::F(3.));
+    let a = Mul(l1.clone(), Pow(l0.clone(), l2.clone()));
 
     let g = a
         .rev()
@@ -1702,10 +1700,10 @@ fn test_pow_rev_2() {
     //y=4^(3x) where x=2
     //y'=ln(4)*4^(3x)*3 where x=2
 
-    let mut l0 = Leaf(ValType::F(2.)).active();
-    let mut l1 = Leaf(ValType::F(4.));
-    let mut l2 = Leaf(ValType::F(3.));
-    let mut a = Pow(l1.clone(), Mul(l2.clone(), l0.clone()));
+    let l0 = Leaf(ValType::F(2.)).active();
+    let l1 = Leaf(ValType::F(4.));
+    let l2 = Leaf(ValType::F(3.));
+    let a = Pow(l1.clone(), Mul(l2.clone(), l0.clone()));
 
     let g = a
         .rev()
