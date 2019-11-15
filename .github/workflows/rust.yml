@@ -12,6 +12,6 @@ jobs:
       with:
             toolchain: nightly
     - name: Build
-      run: cargo +nightly build --verbose
+      run: rustup install nightly && cargo +nightly build --verbose
     - name: Run tests
-      run: cargo +nightly test --verbose
+      run: rustup install nightly && cargo +nightly test --verbose
