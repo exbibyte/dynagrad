@@ -13,8 +13,9 @@ Work in progress..
 - a composition thereof for higher-order derivatives.
 
 # Todo:
-- Extend from scalar to multidimensional entities, with Ricci calculus for manipulating tensors and doing derivatives
-- more ops and tests (see src/core.rs)
+- Multidimension support, possibly with help of ndarray crate
+- Add support for Ricci calculus (eg: einsum) notation for specifying contractions
+- More ops and tests (see src/core.rs)
 
 # Plots:
 <p align="center">
