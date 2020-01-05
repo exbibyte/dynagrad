@@ -14,7 +14,7 @@ Work in progress..
 
 # Todo:
 - Multidimension support, possibly with help of ndarray crate
-- Add support for Ricci calculus notation for symbolic manipulation and contractions operations
+- Add support for Ricci calculus notation for symbolic manipulation (reference: Computing Higher Order Derivatives of Matrix and Tensor Expressions by Laue et al.)
 - More ops and tests (see src/core.rs)
 
 # Plots:
