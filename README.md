@@ -14,7 +14,7 @@ Work in progress..
 
 # Todo:
 - Multidimension support, possibly with help of ndarray crate
-- Add support for Ricci calculus (eg: einsum) notation for specifying contractions
+- Add support for Ricci calculus notation for symbolic manipulation and contractions operations
 - More ops and tests (see src/core.rs)
 
 # Plots:
