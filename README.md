@@ -2,11 +2,6 @@
 
 A pedagogical attempt at auto-differentiation. This is based on the autograd package and other variations of it as well as literature references (eg: The Art of Differentiating Computer Programs, An Introduction to Algorithmic Differentiation – Uwe Naumann).
 
-Work in progress..
-
-# Note:
-- currently depends on Rust nightly
-
 # Support:
 - forward mode
 - reverse mode

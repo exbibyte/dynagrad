@@ -19,7 +19,7 @@ pub struct PtrVWrap(pub Rc<RefCell<VWrap>>);
 impl Hash for PtrVWrap {
     fn hash<H: Hasher>(&self, state: &mut H) {
         let p = Rc::downgrade(&self.0);
-        (Weak::as_raw(&p) as usize).hash(state);
+        (p.as_ptr() as usize).hash(state);
     }
 }
 
